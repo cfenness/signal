@@ -10,8 +10,8 @@ DTSTART:20260731T080000
 DTEND:20260731T081500
 RRULE:FREQ=DAILY
 SUMMARY:SIGNAL — daily voice training
-DESCRIPTION:Warmup, drill, and one scored rep. Open: https://Chriss-MacBook-Pro.local:8443/signal.html
-URL:https://Chriss-MacBook-Pro.local:8443/signal.html
+DESCRIPTION:Warmup, drill, and one scored rep. Open: https://cfenness.github.io/signal/
+URL:https://cfenness.github.io/signal/
 BEGIN:VALARM
 ACTION:DISPLAY
 DESCRIPTION:SIGNAL — daily voice training
