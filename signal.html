@@ -734,6 +734,7 @@
     stopSpeaking();
     state.view = v;
     render();
+    if (v === "piano") playCurrentTargetNote();
   }
 
   function saveKey(v) {
@@ -1168,6 +1169,12 @@
     return out;
   }
 
+  function playCurrentTargetNote() {
+    var lesson = PIANO_LESSONS[state.pianoLessonIdx];
+    if (!lesson || lesson.mode !== "sequence") return;
+    var expected = lesson.sequence[state.pianoStepIdx];
+    if (expected) playNote(expected.n, expected.o, 0.5);
+  }
   function selectPianoLesson(i) {
     state.pianoLessonIdx = i;
     state.pianoStepIdx = 0;
@@ -1176,11 +1183,13 @@
     state.pianoMatchCorrect = 0;
     state.pianoMatchTotal = 0;
     render();
+    playCurrentTargetNote();
   }
   function restartPianoLesson() {
     state.pianoStepIdx = 0;
     state.pianoMsg = null;
     render();
+    playCurrentTargetNote();
   }
   function pianoPlayPrompt() {
     var lesson = PIANO_LESSONS[state.pianoLessonIdx];
@@ -1203,6 +1212,9 @@
         state.pianoStepIdx++;
         state.pianoMsg = state.pianoStepIdx >= lesson.sequence.length ? "Lesson complete!" : null;
         render();
+        if (state.pianoStepIdx < lesson.sequence.length) {
+          setTimeout(playCurrentTargetNote, 550);
+        }
       }
     } else if (lesson.mode === "match") {
       if (state.pianoTargetNote) {
