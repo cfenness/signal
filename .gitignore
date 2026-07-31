@@ -1,0 +1,17 @@
+# This repo lives in ~/Downloads but only tracks the SIGNAL app files below.
+# Everything else in this folder is intentionally ignored.
+*
+
+!signal.html
+!manifest.json
+!sw.js
+!icon.svg
+!icon-192.png
+!icon-512.png
+!apple-touch-icon.png
+!signal-reminder.ics
+!https_server.py
+!.gitignore
+
+# Never track TLS certs/keys, even local dev ones.
+*.pem

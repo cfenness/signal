@@ -1,0 +1,15 @@
+{
+  "name": "SIGNAL — voice training console",
+  "short_name": "SIGNAL",
+  "description": "Daily voice, presence, and media training reps with AI scoring.",
+  "start_url": "./signal.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#181310",
+  "theme_color": "#181310",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

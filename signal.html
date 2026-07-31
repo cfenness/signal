@@ -1,0 +1,1411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SIGNAL — voice training console</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#181310">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SIGNAL">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@500;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap');
+
+  :root {
+    --ink: #181310;
+    --panel: #221B15;
+    --panelUp: #2B221A;
+    --line: #3A2F24;
+    --brass: #C89B5A;
+    --brassDim: #8A6B3E;
+    --cream: #EFE6D4;
+    --muted: #9A8C77;
+    --rec: #E0523C;
+    --ok: #7FA86B;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    min-height: 100vh;
+    background: var(--ink);
+    color: var(--cream);
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+  button { font-family: inherit; }
+  button:focus-visible, textarea:focus-visible, input:focus-visible {
+    outline: 2px solid var(--brass);
+    outline-offset: 2px;
+  }
+  .wrap { max-width: 560px; margin: 0 auto; padding: 22px 18px 60px; }
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    color: var(--brassDim);
+    text-transform: uppercase;
+  }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 18px; }
+  .btn {
+    background: var(--brass);
+    color: var(--ink);
+    border: none;
+    border-radius: 3px;
+    padding: 12px 22px;
+    font-family: 'Big Shoulders Display', sans-serif;
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    text-transform: uppercase;
+  }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .ghost {
+    background: transparent;
+    color: var(--brass);
+    border: 1px solid var(--brassDim);
+  }
+  .vu-wrap { display: flex; gap: 3px; align-items: flex-end; height: 44px; }
+  .vu-bar {
+    width: 5px;
+    border-radius: 1px;
+    background: var(--brass);
+    opacity: 0.22;
+    animation-play-state: paused;
+  }
+  .vu-bar.hot { background: var(--rec); }
+  .vu-bar.live { opacity: 0.9; animation-play-state: running; }
+  @keyframes vu { from { height: 6px; } to { height: 44px; } }
+  @media (prefers-reduced-motion: reduce) { .vu-bar { animation: none !important; } }
+
+  .score-dial { text-align: center; flex: 1; }
+  .score-dial .val { font-family: 'IBM Plex Mono', monospace; font-size: 26px; }
+  .score-dial .lbl { font-size: 10px; letter-spacing: 0.14em; color: var(--muted); text-transform: uppercase; }
+
+  .piano-key { position: absolute; top: 0; border: 1px solid var(--line); border-radius: 0 0 4px 4px; cursor: pointer; box-sizing: border-box; user-select: none; }
+  .piano-key.white { background: var(--cream); z-index: 1; }
+  .piano-key.black { background: var(--ink); z-index: 2; }
+  .piano-key.target { box-shadow: 0 0 0 3px var(--brass) inset; }
+  .piano-key.white:active { background: var(--brass); }
+  .piano-key.black:active { background: var(--brassDim); }
+  .piano-label { position: absolute; bottom: 6px; left: 0; right: 0; text-align: center; font-size: 10px; color: var(--ink); font-family: 'IBM Plex Mono', monospace; }
+
+  textarea, input[type=password], input[type=text] {
+    font-family: 'Inter', sans-serif;
+    background: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    color: var(--cream);
+    font-size: 14px;
+    padding: 10px 12px;
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ============================================================
+     SIGNAL — a daily voice training console (standalone build)
+     Tracks: VOICE / PRESENCE / REPS / MEDIA
+     Vanilla JS port — no React, no build step, opens as a plain file.
+     ============================================================ */
+
+  var MODEL = "claude-sonnet-5";
+
+  var FILLERS = ["um", "uh", "like", "you know", "kind of", "sort of", "basically", "actually", "i mean", "right?"];
+
+  var WARMUPS = [
+    { id: "w1", name: "Straw phonation", time: 120, how: "Hum gently through a straw (or pursed lips) sliding low to high and back. Keep it easy — this resets the vocal folds and gets air, not throat, doing the work.", video: "t8nfCmZRdNs" },
+    { id: "w2", name: "Lip trills", time: 120, how: "Trill the lips on a steady tone, then slide up and down your range. If the trill stops, you've lost breath support — restart softer.", video: "CVCWwNILwVk" },
+    { id: "w3", name: "Hum to the mask", time: 120, how: "Hum 'mm-hmm' and hunt for buzz in the lips, nose, and cheekbones. That buzz is forward placement. Open into 'mmm-ah' keeping the buzz up front.", video: "kcHDvQSN1v8" },
+    { id: "w4", name: "Nay-nay twang", time: 120, how: "Say a bratty, cartoonish 'nay nay nay' up and down a small range. Obnoxious is correct — this builds the ring that cuts through a room.", video: "JRdavXE43D4" }
+  ];
+
+  var DRILLS = [
+    { id: "d1", track: "VOICE", name: "Supported count-up", time: 180, how: "One breath, count aloud from 1, even volume, zero throat squeeze. Stop when support fades — never push. Three rounds; note your top number.", video: "nwXH0mlOdFk" },
+    { id: "d2", track: "PRESENCE", name: "Read with intent", time: 180, how: "Read any paragraph aloud three ways: to reassure, to warn, to sell. Same words, three deliveries. The variance is the skill." },
+    { id: "d3", track: "VOICE", name: "Pitch ladder", time: 180, how: "Speak one sentence at three deliberate pitches: low authority, mid conversational, bright emphasis. Land each rung cleanly — no drifting.", video: "7oRr6E_Eslo" },
+    { id: "d4", track: "PRESENCE", name: "The pause rep", time: 180, how: "Deliver four sentences with a full two-second silence between each. Hold eye line forward. Discomfort in silence is the muscle being trained." },
+    { id: "d5", track: "VOICE", name: "Consonant snap", time: 180, how: "Over-articulate a tongue twister slowly, then at speed: 'The tip of the tongue, the teeth, the lips.' Crisp finals — the T's and P's must land.", video: "kxQTyqGtZNo" },
+    { id: "d6", track: "PRESENCE", name: "One-minute story", time: 180, how: "Tell a 60-second story from your week with a beginning, turn, and landing line. No warmup sentences — first sentence is the hook." }
+  ];
+
+  var REPS = [
+    { id: "r1", track: "REPS", name: "Impromptu 90", time: 90, prompt: "Explain in 90 seconds why on-premise menu data is a leading indicator for the beverage alcohol category.",
+      example: "Here's the short version: menus change faster than shelves do. A restaurant can swap a cocktail list or drop a keg line in a week, while a retail SKU set is locked for a planning cycle. That means what's happening on-premise today is what shows up in retail data next quarter, not the other way around. We track menu additions, drops, and pricing across tens of thousands of accounts, and it consistently front-runs the category shifts everyone else reads about after the fact. Take ready-to-drink cocktails: we saw them show up on menus eighteen months before the retail volume caught up. If you're only watching retail scan data, you're reading last quarter's decision. On-premise is where the decision gets made first. That's the whole thesis: menus are the leading indicator, retail is the lagging confirmation." },
+    { id: "r2", track: "MEDIA", name: "Bridge the trap", time: 45, prompt: "A journalist asks: 'Isn't the three-tier system basically obsolete?' Answer in under 45 seconds. Bridge to one message you control, and flag your key point.",
+      example: "There are real cracks in it, nobody disputes that direct shipping and delivery apps didn't exist when three-tier was written. But here's the point that actually matters: the data shows the tier under real pressure isn't distribution, it's retail. Independent stores are losing shelf space to delivery-native brands faster than distributors are losing relevance. So the real question isn't 'is three-tier obsolete,' it's 'which layer of it needs to modernize first,' and that's retail, not distribution." },
+    { id: "r3", track: "REPS", name: "Impromptu 90", time: 90, prompt: "Explain in 90 seconds what a price index is, to a smart audience that has never worked with data.",
+      example: "A price index isn't a price, it's a ruler. If I tell you the average bottle costs fourteen dollars, that number swings around depending on what mix of products people happened to buy that week. A price index strips that out: it tracks the same basket of products over time, so when the number moves, you know prices actually moved, it's not just because people bought more premium bottles this month. Think of it like tracking your weight on the same scale every morning instead of comparing yourself to a different person each day. That's why economists use CPI instead of an average grocery receipt, and it's exactly what we do at the SKU level for alcohol: hold the basket fixed, watch the index move, and now you actually know if prices are rising." },
+    { id: "r4", track: "MEDIA", name: "Soundbite drill", time: 30, prompt: "Give a single quotable 20-second take: 'What's the biggest shift in how Americans buy alcohol?' One idea, clean landing.",
+      example: "The biggest shift isn't where people buy, it's when they decide. Ten years ago the decision happened standing in a store aisle. Now it happens scrolling a delivery app before they've even left the couch. That's not a channel shift, that's a moment-of-decision shift, and almost nobody's built for it yet." },
+    { id: "r5", track: "REPS", name: "Impromptu 90", time: 90, prompt: "You have 90 seconds on a conference panel: 'What do distributors misunderstand about their own data?'",
+      example: "The biggest one: they think they see the market because they see their own book. But a distributor's data only shows what already made it onto their trucks, it can't show the accounts they've never sold into, or the shelf space a competitor is winning before it ever shows up as a lost PO. The second misunderstanding is treating velocity and distribution as the same signal. A SKU can look healthy because it's everywhere, while actually underperforming per account, and nobody catches it because the two numbers get blended into one chart. What matters is knowing your true addressable universe first, then measuring your share of it, not just admiring how big your own book looks from the inside." },
+    { id: "r6", track: "MEDIA", name: "False premise", time: 45, prompt: "A reporter says: 'So your data shows delivery is killing retail stores, right?' It doesn't. Correct the premise without sounding defensive, in 45 seconds.",
+      example: "That's not actually what the data shows, so let me correct that before we go further. Retail store count has been flat, what's changed is which stores are growing. Delivery is growing the stores that lean into it, and squeezing the ones that ignore it. So this isn't delivery killing retail, it's delivery separating winners from laggards inside retail. That's a very different story, and it's the one the data actually tells." },
+    { id: "s1", track: "STORY", name: "The mind-changer", time: 90, prompt: "Tell a 90-second story about a moment when data changed your mind about something you were sure of. Hook first sentence, one clear turn, land the takeaway.",
+      example: "I was sure delivery was cannibalizing retail. Then I pulled the actual menu data and watched myself be wrong in real time. Every account I checked that leaned into delivery wasn't losing volume, it was growing faster than the ones that ignored it. That's the moment I stopped treating channels as a zero-sum fight and started treating them as a bet on which retailers were actually paying attention. The data didn't confirm my thesis, it replaced it, and the replacement turned out to be the more useful one." },
+    { id: "s2", track: "STORY", name: "The advice that landed", time: 60, prompt: "Tell a 60-second story about the best or worst piece of advice you ever got in your career. Make the ending do the work, not the setup.",
+      example: "Someone told me early on: don't build the dashboard, build the decision. I ignored it for a year and built dashboards. Nobody used them, they were technically correct and completely unopened. The ones that finally landed were the ones that answered one specific question somebody actually had that week. Turns out the advice wasn't about dashboards at all, it was about starting from the decision and working backward, every single time." },
+    { id: "s3", track: "STORY", name: "Almost gave up", time: 90, prompt: "Tell a 90-second story about a moment you almost gave up on something that ended up working. Hook first sentence, land on what actually changed.",
+      example: "Six months in, the numbers said this shouldn't work, three sources blocked us in the same week. I remember thinking the honest move was to just say the free path didn't exist and walk away. Then one machine, one residential IP, and one afternoon proved the block was about where we were running from, not whether it was possible. The lesson wasn't don't give up in the abstract, it was that the failure was in the setup, not the plan, and those are very different problems." }
+  ];
+
+  /* ---------- piano: basic ear-training accelerant for the vocal work, not a pillar ---------- */
+  var PIANO_LESSONS = [
+    { id: "p1", name: "Find your notes", mode: "sequence", instructions: "Tap each glowing key in order — this is just learning where the notes live.",
+      sequence: [{ n: "C", o: 4 }, { n: "D", o: 4 }, { n: "E", o: 4 }, { n: "F", o: 4 }, { n: "G", o: 4 }] },
+    { id: "p2", name: "C major scale", mode: "sequence", instructions: "Play the scale low to high, then back down. Same fixed reference every time — that's the point.",
+      sequence: [
+        { n: "C", o: 4 }, { n: "D", o: 4 }, { n: "E", o: 4 }, { n: "F", o: 4 }, { n: "G", o: 4 }, { n: "A", o: 4 }, { n: "B", o: 4 }, { n: "C", o: 5 },
+        { n: "B", o: 4 }, { n: "A", o: 4 }, { n: "G", o: 4 }, { n: "F", o: 4 }, { n: "E", o: 4 }, { n: "D", o: 4 }, { n: "C", o: 4 }
+      ] },
+    { id: "p3", name: "Pitch match", mode: "match", instructions: "Listen, then tap the key that matches the pitch you heard — the actual ear-training drill for your voice work.",
+      pool: [{ n: "C", o: 4 }, { n: "D", o: 4 }, { n: "E", o: 4 }, { n: "F", o: 4 }, { n: "G", o: 4 }, { n: "A", o: 4 }, { n: "B", o: 4 }, { n: "C", o: 5 }] }
+  ];
+  var NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+  var audioCtx = null;
+  function noteFreq(n, o) {
+    var idx = NOTE_NAMES.indexOf(n);
+    var midi = (o + 1) * 12 + idx;
+    return 440 * Math.pow(2, (midi - 69) / 12);
+  }
+  function ensureAudioCtx() {
+    if (!audioCtx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new AC();
+    }
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    return audioCtx;
+  }
+  function playNote(n, o, duration) {
+    var ctx = ensureAudioCtx();
+    var freq = noteFreq(n, o);
+    var dur = duration || 0.6;
+    var now = ctx.currentTime;
+    var osc = ctx.createOscillator();
+    var gain = ctx.createGain();
+    osc.type = "triangle";
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.3, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + dur + 0.05);
+  }
+  function buildKeyboardRange() {
+    var notes = [];
+    for (var o = 3; o <= 4; o++) NOTE_NAMES.forEach(function (n) { notes.push({ n: n, o: o }); });
+    notes.push({ n: "C", o: 5 });
+    return notes;
+  }
+
+  var TRACKS = ["VOICE", "PRESENCE", "REPS", "MEDIA", "STORY"];
+
+  function getFocusTrack() {
+    try {
+      var v = localStorage.getItem("signal-focus-track");
+      return TRACKS.indexOf(v) !== -1 ? v : null;
+    } catch (e) { return null; }
+  }
+  function setFocusTrackStored(v) {
+    try {
+      if (v) localStorage.setItem("signal-focus-track", v);
+      else localStorage.removeItem("signal-focus-track");
+    } catch (e) {}
+  }
+
+  function drillPoolFor(focus) {
+    return (focus === "VOICE" || focus === "PRESENCE") ? DRILLS.filter(function (d) { return d.track === focus; }) : DRILLS;
+  }
+  function repPoolFor(focus) {
+    return (focus === "REPS" || focus === "MEDIA" || focus === "STORY") ? REPS.filter(function (r) { return r.track === focus; }) : REPS;
+  }
+
+  function daySeed() { return Math.floor(Date.now() / 86400000); }
+  function buildSession(focus) {
+    var s = daySeed();
+    var drills = drillPoolFor(focus);
+    var reps = repPoolFor(focus);
+    return [WARMUPS[s % WARMUPS.length], drills[s % drills.length], reps[s % reps.length]];
+  }
+  function todayKey() {
+    var d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
+
+  function analyzeTranscript(text, seconds) {
+    var clean = text.toLowerCase();
+    var words = clean.split(/\s+/).filter(Boolean);
+    var fillerCount = 0;
+    var found = {};
+    FILLERS.forEach(function (f) {
+      var re = new RegExp("\\b" + f.replace("?", "\\?") + "\\b", "g");
+      var m = clean.match(re);
+      if (m) { fillerCount += m.length; found[f] = m.length; }
+    });
+    var wpm = seconds > 0 ? Math.round((words.length / seconds) * 60) : 0;
+    return { words: words.length, fillerCount: fillerCount, found: found, wpm: wpm };
+  }
+
+  /* ---------- storage (real localStorage, not a stub) ---------- */
+  function loadLog() {
+    try {
+      var raw = localStorage.getItem("signal-log-v1");
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) { return []; }
+  }
+  function saveLog(log) {
+    try { localStorage.setItem("signal-log-v1", JSON.stringify(log)); }
+    catch (e) { console.error("save failed", e); }
+  }
+  function getApiKey() {
+    try { return localStorage.getItem("signal-api-key") || ""; }
+    catch (e) { return ""; }
+  }
+  function setApiKeyStored(k) {
+    try { localStorage.setItem("signal-api-key", k); }
+    catch (e) {}
+  }
+
+  /* ---------- audio clip storage (IndexedDB — blobs don't fit in localStorage) ---------- */
+  function idbOpen() {
+    return new Promise(function (resolve, reject) {
+      var req = indexedDB.open("signal-audio-db", 1);
+      req.onupgradeneeded = function () { req.result.createObjectStore("clips"); };
+      req.onsuccess = function () { resolve(req.result); };
+      req.onerror = function () { reject(req.error); };
+    });
+  }
+  async function idbPut(key, blob) {
+    var db = await idbOpen();
+    return new Promise(function (resolve, reject) {
+      var tx = db.transaction("clips", "readwrite");
+      tx.objectStore("clips").put(blob, key);
+      tx.oncomplete = function () { resolve(); };
+      tx.onerror = function () { reject(tx.error); };
+    });
+  }
+  async function idbGet(key) {
+    var db = await idbOpen();
+    return new Promise(function (resolve, reject) {
+      var tx = db.transaction("clips", "readonly");
+      var req = tx.objectStore("clips").get(key);
+      req.onsuccess = function () { resolve(req.result); };
+      req.onerror = function () { reject(req.error); };
+    });
+  }
+  async function idbDelete(key) {
+    var db = await idbOpen();
+    return new Promise(function (resolve, reject) {
+      var tx = db.transaction("clips", "readwrite");
+      tx.objectStore("clips").delete(key);
+      tx.oncomplete = function () { resolve(); };
+      tx.onerror = function () { reject(tx.error); };
+    });
+  }
+  function deleteSession(date) {
+    var entry = state.log.find(function (s) { return s.date === date; });
+    if (!entry) return;
+    if (!window.confirm("Delete the " + date + " session? This can't be undone.")) return;
+    state.log = state.log.filter(function (s) { return s.date !== date; });
+    saveLog(state.log);
+    if (entry.audioKey) idbDelete(entry.audioKey).catch(function () {});
+    render();
+  }
+  function blobToDataUrl(blob) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onloadend = function () { resolve(reader.result); };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+  function dataUrlToBlob(dataUrl) {
+    return fetch(dataUrl).then(function (r) { return r.blob(); });
+  }
+
+  async function exportBackup() {
+    state.backupMsg = "Bundling clips…";
+    render();
+    var clips = {};
+    var keys = state.log.map(function (s) { return s.audioKey; }).filter(Boolean);
+    for (var i = 0; i < keys.length; i++) {
+      var blob = await idbGet(keys[i]);
+      if (blob) clips[keys[i]] = await blobToDataUrl(blob);
+    }
+    var payload = { exportedAt: todayKey(), log: state.log, clips: clips };
+    var json = JSON.stringify(payload);
+    var blob2 = new Blob([json], { type: "application/json" });
+    var url = URL.createObjectURL(blob2);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "signal-backup-" + todayKey() + ".json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    state.backupMsg = "Exported " + state.log.length + " session(s), " + Object.keys(clips).length + " clip(s).";
+    render();
+  }
+
+  async function importBackup(file) {
+    if (!file) return;
+    state.backupMsg = "Importing…";
+    render();
+    try {
+      var text = await file.text();
+      var payload = JSON.parse(text);
+      if (!payload || !Array.isArray(payload.log)) throw new Error("bad-format");
+      var incomingDates = payload.log.map(function (s) { return s.date; });
+      state.log = state.log.filter(function (s) { return incomingDates.indexOf(s.date) === -1; }).concat(payload.log);
+      state.log.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+      saveLog(state.log);
+      var clips = payload.clips || {};
+      var keys = Object.keys(clips);
+      for (var i = 0; i < keys.length; i++) {
+        var blob = await dataUrlToBlob(clips[keys[i]]);
+        await idbPut(keys[i], blob);
+      }
+      state.backupMsg = "Imported " + payload.log.length + " session(s), " + keys.length + " clip(s).";
+    } catch (e) {
+      state.backupMsg = "Import failed — file wasn't a SIGNAL backup.";
+    }
+    render();
+  }
+
+  async function compareWithDay1(currentKey, day1Key, btn) {
+    var original = btn ? btn.textContent : null;
+    try {
+      var blob1 = await idbGet(day1Key);
+      var blob2 = await idbGet(currentKey);
+      if (!blob1 || !blob2) { if (btn) btn.textContent = "clip missing"; return; }
+      var a1 = new Audio(URL.createObjectURL(blob1));
+      var a2 = new Audio(URL.createObjectURL(blob2));
+      if (btn) btn.textContent = "▶ day 1…";
+      a1.play();
+      a1.onended = function () {
+        if (btn) btn.textContent = "▶ today…";
+        a2.play();
+      };
+      a2.onended = function () { if (btn) btn.textContent = original; };
+    } catch (e) {
+      if (btn) btn.textContent = "playback failed";
+    }
+  }
+
+  async function playClip(key, btn) {
+    var original = btn ? btn.textContent : null;
+    try {
+      var blob = await idbGet(key);
+      if (!blob) { if (btn) btn.textContent = "no audio"; return; }
+      var url = URL.createObjectURL(blob);
+      var audio = new Audio(url);
+      audio.play();
+      if (btn) {
+        btn.textContent = "▶ playing…";
+        audio.onended = function () { btn.textContent = original; };
+      }
+    } catch (e) {
+      if (btn) btn.textContent = "playback failed";
+    }
+  }
+
+  function computeStreak(log) {
+    var days = Array.from(new Set(log.map(function (s) { return s.date; }))).sort().reverse();
+    if (!days.length) return 0;
+    var streak = 0;
+    var cursor = new Date();
+    if (days[0] !== todayKey()) cursor.setDate(cursor.getDate() - 1);
+    for (;;) {
+      var k = cursor.getFullYear() + "-" + String(cursor.getMonth() + 1).padStart(2, "0") + "-" + String(cursor.getDate()).padStart(2, "0");
+      if (days.indexOf(k) !== -1) { streak++; cursor.setDate(cursor.getDate() - 1); }
+      else break;
+    }
+    return streak;
+  }
+
+  /* ---------- Claude scoring — needs your own Anthropic API key (gear icon) ---------- */
+  function messageRubricForTrack(track) {
+    if (track === "MEDIA") return "did they land a controlled point — specifically, did they bridge away from the trap and flag their key point clearly.";
+    if (track === "STORY") return "did the story actually land as a story — a clean hook in the first sentence, one clear turn, and a landing line that pays it off. Judge structure on hook/turn/landing specifically, not general coherence.";
+    return "did they land a controlled point clearly and directly.";
+  }
+  async function scoreWithClaude(prompt, transcript, metrics, track) {
+    var apiKey = getApiKey();
+    if (!apiKey) throw new Error("no-key");
+    var sys = "You are a broadcast voice and media coach scoring a spoken rep from its transcript. Respond ONLY with raw JSON, no markdown fences, no preamble. Schema: {\"overall\": 1-10, \"structure\": 1-10, \"clarity\": 1-10, \"message\": 1-10, \"best_line\": string, \"fix_one_thing\": string, \"coach_note\": string}. \"message\" = " + messageRubricForTrack(track) + " best_line = their strongest quotable sentence, verbatim from transcript. fix_one_thing = the single highest-leverage correction, one sentence. coach_note = two sentences max, direct, specific, no praise padding.";
+    var user = "THE ASSIGNMENT: " + prompt + "\n\nDELIVERY METRICS: " + metrics.wpm + " wpm, " + metrics.fillerCount + " filler words in " + metrics.words + " words.\n\nTRANSCRIPT:\n" + transcript;
+    var res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true"
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 1000,
+        system: sys,
+        messages: [{ role: "user", content: user }]
+      })
+    });
+    if (!res.ok) {
+      var errText = await res.text();
+      throw new Error("api-error: " + errText.slice(0, 200));
+    }
+    var data = await res.json();
+    var text = (data.content || []).filter(function (b) { return b.type === "text"; }).map(function (b) { return b.text; }).join("\n");
+    var cleanText = text.replace(/```json|```/g, "").trim();
+    return JSON.parse(cleanText);
+  }
+
+  /* ============================================================
+     state
+     ============================================================ */
+  var state = {
+    view: "today",
+    log: loadLog(),
+    focusTrack: getFocusTrack(),
+    session: null,
+    stepIdx: 0,
+    running: false,
+    remaining: 0,
+    doneSteps: [],
+    transcript: "",
+    listening: false,
+    speechOk: true,
+    repSeconds: 0,
+    score: null,
+    scoring: false,
+    scoreErr: null,
+    saved: false,
+    apiKey: getApiKey(),
+    settingsOpen: false,
+    pendingAudioKey: null,
+    showExample: false,
+    speakingExample: false,
+    showVideo: false,
+    backupMsg: null,
+    storageEstimate: null,
+    pianoLessonIdx: 0,
+    pianoStepIdx: 0,
+    pianoMsg: null,
+    pianoTargetNote: null,
+    pianoMatchCorrect: 0,
+    pianoMatchTotal: 0
+  };
+  state.session = buildSession(state.focusTrack);
+  state.remaining = state.session[0].time;
+
+  var recogRef = null;
+  var timerHandle = null;
+  var finalTranscript = "";
+  var mediaStream = null;
+  var mediaRecorder = null;
+  var audioChunks = [];
+
+  function tierArrayFor(i) {
+    if (i === 0) return WARMUPS;
+    if (i === 1) return drillPoolFor(state.focusTrack);
+    return repPoolFor(state.focusTrack);
+  }
+  function setFocusTrack(v) {
+    if (state.running) return;
+    stopSpeaking();
+    state.showExample = false;
+    state.showVideo = false;
+    var next = state.focusTrack === v ? null : v; // click active chip again to clear
+    state.focusTrack = next;
+    setFocusTrackStored(next);
+    state.session = buildSession(next);
+    state.stepIdx = 0;
+    state.remaining = state.session[0].time;
+    state.doneSteps = [];
+    state.saved = false;
+    state.score = null;
+    state.scoreErr = null;
+    state.transcript = "";
+    state.repSeconds = 0;
+    render();
+  }
+  function rerollStep() {
+    if (state.running) return;
+    stopSpeaking();
+    state.showExample = false;
+    state.showVideo = false;
+    var arr = tierArrayFor(state.stepIdx);
+    var current = state.session[state.stepIdx];
+    var choices = arr.filter(function (x) { return x.id !== current.id; });
+    if (!choices.length) return;
+    var next = choices[Math.floor(Math.random() * choices.length)];
+    state.session[state.stepIdx] = next;
+    state.remaining = next.time;
+    render();
+  }
+
+  /* ---------- mic audio capture — best effort; silently unavailable if no mic/permission ---------- */
+  async function startAudioRecording() {
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunks = [];
+      var mimeType = (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported("audio/webm")) ? "audio/webm" : "";
+      mediaRecorder = mimeType ? new MediaRecorder(mediaStream, { mimeType: mimeType }) : new MediaRecorder(mediaStream);
+      mediaRecorder.ondataavailable = function (e) { if (e.data && e.data.size) audioChunks.push(e.data); };
+      mediaRecorder.start();
+    } catch (e) {
+      mediaStream = null;
+      mediaRecorder = null;
+    }
+  }
+  function stopAudioRecording() {
+    if (!mediaRecorder) return Promise.resolve(null);
+    var recorder = mediaRecorder;
+    var stream = mediaStream;
+    return new Promise(function (resolve) {
+      recorder.onstop = function () {
+        var blob = new Blob(audioChunks, { type: audioChunks[0] ? audioChunks[0].type : "audio/webm" });
+        stream.getTracks().forEach(function (t) { t.stop(); });
+        resolve(blob);
+      };
+      try { recorder.stop(); } catch (e) { resolve(null); }
+    });
+  }
+  function finishRepCapture() {
+    stopListening();
+    stopAudioRecording().then(function (blob) {
+      mediaRecorder = null;
+      mediaStream = null;
+      audioChunks = [];
+      if (blob && blob.size) {
+        var key = todayKey() + "-" + Date.now();
+        idbPut(key, blob).then(function () { state.pendingAudioKey = key; });
+      }
+    });
+  }
+
+  function currentStep() { return state.session[state.stepIdx]; }
+  function isRepStep() { return state.stepIdx === 2; }
+  function doneToday() { return state.log.some(function (s) { return s.date === todayKey(); }); }
+  function currentMetrics() {
+    var seconds = state.repSeconds || (currentStep().time - state.remaining) || currentStep().time;
+    return analyzeTranscript(state.transcript, seconds);
+  }
+
+  /* ---------- speech recognition ---------- */
+  function startListening() {
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { state.speechOk = false; render(); return; }
+    try {
+      var r = new SR();
+      r.continuous = true;
+      r.interimResults = true;
+      r.lang = "en-US";
+      finalTranscript = state.transcript ? state.transcript + " " : "";
+      r.onresult = function (e) {
+        var interim = "";
+        for (var i = e.resultIndex; i < e.results.length; i++) {
+          if (e.results[i].isFinal) finalTranscript += e.results[i][0].transcript + " ";
+          else interim += e.results[i][0].transcript;
+        }
+        state.transcript = (finalTranscript + interim).trim();
+        updateTranscriptUI();
+      };
+      r.onerror = function () { state.speechOk = false; render(); };
+      r.start();
+      recogRef = r;
+      state.listening = true;
+      render();
+    } catch (e) {
+      state.speechOk = false;
+      render();
+    }
+  }
+  function stopListening() {
+    try { recogRef && recogRef.stop(); } catch (e) {}
+    state.listening = false;
+    render();
+  }
+
+  /* ---------- timer ---------- */
+  function startStep() {
+    stopSpeaking();
+    state.running = true;
+    if (isRepStep()) {
+      state.score = null;
+      state.scoreErr = null;
+      state.pendingAudioKey = null;
+      startListening();
+      startAudioRecording();
+    }
+    render();
+    timerHandle = setInterval(function () {
+      state.remaining = Math.max(0, state.remaining - 1);
+      if (isRepStep()) state.repSeconds++;
+      if (state.remaining <= 0) {
+        clearInterval(timerHandle);
+        state.running = false;
+        if (isRepStep()) finishRepCapture();
+        render();
+        return;
+      }
+      updateTimerUI();
+    }, 1000);
+  }
+  function finishStep() {
+    stopSpeaking();
+    state.running = false;
+    clearInterval(timerHandle);
+    if (isRepStep()) finishRepCapture();
+    if (state.doneSteps.indexOf(state.stepIdx) === -1) state.doneSteps.push(state.stepIdx);
+    if (state.stepIdx < 2) {
+      state.stepIdx++;
+      state.remaining = currentStep().time;
+    }
+    render();
+  }
+  function resetStep() {
+    state.remaining = currentStep().time;
+    render();
+  }
+  function selectStep(i) {
+    if (state.running) return;
+    stopSpeaking();
+    state.showExample = false;
+    state.showVideo = false;
+    state.stepIdx = i;
+    state.remaining = currentStep().time;
+    render();
+  }
+
+  async function runScore() {
+    if (!state.transcript.trim()) return;
+    if (!state.apiKey) {
+      state.scoreErr = "Add your Anthropic API key first (gear icon, top right).";
+      render();
+      return;
+    }
+    state.scoring = true;
+    state.scoreErr = null;
+    render();
+    try {
+      var s = await scoreWithClaude(currentStep().prompt, state.transcript, currentMetrics(), currentStep().track);
+      state.score = s;
+    } catch (e) {
+      state.scoreErr = "Scoring didn't come back clean. Try once more. (" + e.message + ")";
+    }
+    state.scoring = false;
+    render();
+  }
+
+  function saveSession() {
+    var m = currentMetrics();
+    var entry = {
+      date: todayKey(),
+      minutes: Math.round(state.session.reduce(function (a, s) { return a + s.time; }, 0) / 60),
+      wpm: m.wpm,
+      fillers: m.fillerCount,
+      overall: state.score ? state.score.overall : null,
+      rep: currentStep().name,
+      note: state.score ? state.score.fix_one_thing : "",
+      audioKey: state.pendingAudioKey || null
+    };
+    var previous = state.log.find(function (s) { return s.date === todayKey(); });
+    if (previous && previous.audioKey && previous.audioKey !== entry.audioKey) {
+      idbDelete(previous.audioKey).catch(function () {});
+    }
+    state.log = state.log.filter(function (s) { return s.date !== todayKey(); }).concat([entry]);
+    saveLog(state.log);
+    state.saved = true;
+    render();
+  }
+
+  function switchView(v) {
+    if (state.running) finishStep();
+    stopSpeaking();
+    state.view = v;
+    render();
+  }
+
+  function saveKey(v) {
+    state.apiKey = v;
+    setApiKeyStored(v);
+    state.settingsOpen = false;
+    render();
+  }
+  function clearKey() {
+    state.apiKey = "";
+    setApiKeyStored("");
+    render();
+  }
+  function refreshStorageEstimate() {
+    if (!navigator.storage || !navigator.storage.estimate) {
+      state.storageEstimate = "unsupported";
+      render();
+      return;
+    }
+    navigator.storage.estimate().then(function (est) {
+      state.storageEstimate = est;
+      render();
+    }).catch(function () {
+      state.storageEstimate = "unsupported";
+      render();
+    });
+  }
+
+  /* ============================================================
+     render
+     ============================================================ */
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function vuMeterHtml(live) {
+    var bars = 14;
+    var out = '<div class="vu-wrap" aria-hidden="true">';
+    for (var i = 0; i < bars; i++) {
+      var hot = i > bars - 4;
+      var dur = (0.5 + (i % 5) * 0.13).toFixed(2);
+      var delay = (i * 0.05).toFixed(2);
+      var restHeight = 8 + (i % 4) * 4;
+      out += '<div class="vu-bar' + (hot ? " hot" : "") + (live ? " live" : "") + '" data-vu="' + i + '" ' +
+        'style="height:' + (live ? "6px" : restHeight + "px") + ';animation:vu ' + dur + 's ease-in-out ' + delay + 's infinite alternate;"></div>';
+    }
+    out += "</div>";
+    return out;
+  }
+
+  function scoreDialHtml(label, value) {
+    var color = value >= 7 ? "var(--ok)" : value >= 4 ? "var(--brass)" : "var(--rec)";
+    return '<div class="score-dial"><div class="val" style="color:' + color + '">' + esc(value) + '</div><div class="lbl">' + esc(label) + "</div></div>";
+  }
+
+  function headerHtml() {
+    var live = state.running || state.listening;
+    return (
+      '<header style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+        '<div>' +
+          '<div style="font-family:\'Big Shoulders Display\',sans-serif;font-weight:700;font-size:34px;letter-spacing:0.04em;line-height:1;">SIGNAL</div>' +
+          '<div class="eyebrow" style="margin-top:4px;">voice training console</div>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:14px;">' +
+          '<div style="display:flex;align-items:center;gap:10px;">' +
+            '<span style="width:10px;height:10px;border-radius:50%;background:' + (live ? "var(--rec)" : "var(--line)") + ';box-shadow:' + (live ? "0 0 10px var(--rec)" : "none") + ';" aria-hidden="true"></span>' +
+            '<span class="eyebrow" style="color:' + (live ? "var(--rec)" : "var(--muted)") + '">' + (state.listening ? "ON AIR" : state.running ? "LIVE" : "STANDBY") + "</span>" +
+          "</div>" +
+          '<button id="btn-settings" class="ghost" style="border-radius:3px;padding:6px 10px;font-size:12px;cursor:pointer;" title="Anthropic API key">&#9881;</button>' +
+        "</div>" +
+      "</header>"
+    );
+  }
+
+  function formatBytes(n) {
+    if (n == null) return "—";
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+    return (n / (1024 * 1024)).toFixed(1) + " MB";
+  }
+  function keyStatusLabel() {
+    if (!state.apiKey) return "No key saved.";
+    var tail = state.apiKey.slice(-4);
+    return "Key saved (••••••••" + tail + ").";
+  }
+  function storageLineHtml() {
+    if (state.storageEstimate === "unsupported") return "Storage usage isn't available in this browser.";
+    if (!state.storageEstimate) return "Checking storage usage…";
+    var used = formatBytes(state.storageEstimate.usage);
+    var quota = formatBytes(state.storageEstimate.quota);
+    return "Using " + used + " of ~" + quota + " available (log + recorded clips).";
+  }
+
+  function settingsHtml() {
+    if (!state.settingsOpen) return "";
+    return (
+      '<div class="card" style="margin-bottom:14px;">' +
+        '<div class="eyebrow">anthropic api key</div>' +
+        '<p style="font-size:13px;color:var(--muted);margin:8px 0;">Stored only in this browser\'s localStorage. Used only for the scoring fetch below — never sent anywhere else.</p>' +
+        '<p style="font-size:12px;color:var(--brass);margin:0 0 8px;">' + esc(keyStatusLabel()) + "</p>" +
+        '<input id="api-key-input" type="password" placeholder="sk-ant-..." value="' + esc(state.apiKey) + '" style="width:100%;box-sizing:border-box;">' +
+        '<div style="margin-top:10px;display:flex;gap:8px;">' +
+          '<button id="btn-save-key" class="btn" style="padding:8px 16px;font-size:13px;">Save</button>' +
+          (state.apiKey ? '<button id="btn-clear-key" class="ghost" style="border-radius:3px;padding:8px 16px;font-size:13px;cursor:pointer;">Clear</button>' : "") +
+          '<button id="btn-close-settings" class="ghost" style="border-radius:3px;padding:8px 16px;font-size:13px;cursor:pointer;">Close</button>' +
+        "</div>" +
+        '<div class="eyebrow" style="margin-top:16px;">storage</div>' +
+        '<p style="font-size:12px;color:var(--muted);margin:8px 0 0;">' + esc(storageLineHtml()) + "</p>" +
+      "</div>"
+    );
+  }
+
+  function countersHtml() {
+    var scored = state.log.filter(function (s) { return s.overall != null; });
+    var totalMin = state.log.reduce(function (a, s) { return a + (s.minutes || 0); }, 0);
+    var streak = computeStreak(state.log);
+    var last = scored.length ? scored[scored.length - 1].overall : "—";
+    var items = [[streak, "day streak"], [totalMin, "total min"], [last, "last score"]];
+    return (
+      '<div style="display:flex;gap:10px;margin:16px 0 22px;">' +
+      items.map(function (it) {
+        return '<div class="card" style="flex:1;padding:10px 12px;text-align:center;">' +
+          '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:22px;">' + esc(it[0]) + "</div>" +
+          '<div style="font-size:10px;letter-spacing:0.12em;color:var(--muted);text-transform:uppercase;">' + esc(it[1]) + "</div>" +
+        "</div>";
+      }).join("") +
+      "</div>"
+    );
+  }
+
+  var VIEW_LABELS = { today: "Today's session", log: "Session log", piano: "Piano" };
+  function tabsHtml() {
+    return (
+      '<div style="display:flex;gap:6px;margin-bottom:18px;">' +
+      ["today", "log", "piano"].map(function (v) {
+        var active = state.view === v;
+        return '<button data-view="' + v + '" class="ghost view-tab" style="border-radius:3px;padding:8px 18px;font-size:13px;cursor:pointer;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;' +
+          "background:" + (active ? "var(--panelUp)" : "transparent") + ";" +
+          "color:" + (active ? "var(--cream)" : "var(--muted)") + ";" +
+          "border-color:" + (active ? "var(--brassDim)" : "var(--line)") + ';">' +
+          esc(VIEW_LABELS[v]) +
+          "</button>";
+      }).join("") +
+      "</div>"
+    );
+  }
+
+  function trackPickerHtml() {
+    var chips = [null].concat(TRACKS);
+    return (
+      '<div style="margin-bottom:14px;">' +
+        '<div class="eyebrow" style="margin-bottom:8px;">focus</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+        chips.map(function (t) {
+          var active = state.focusTrack === t;
+          var label = t === null ? "Mixed" : t.charAt(0) + t.slice(1).toLowerCase();
+          return '<button data-track="' + (t || "") + '" class="ghost track-chip" style="border-radius:20px;padding:6px 14px;font-size:12px;cursor:' + (state.running ? "not-allowed" : "pointer") + ";" +
+            "background:" + (active ? "var(--panelUp)" : "transparent") + ";" +
+            "color:" + (active ? "var(--brass)" : "var(--muted)") + ";" +
+            "border-color:" + (active ? "var(--brass)" : "var(--line)") + ';"' + (state.running ? " disabled" : "") + ">" +
+            esc(label) +
+            "</button>";
+        }).join("") +
+        "</div>" +
+      "</div>"
+    );
+  }
+
+  function stepStripHtml() {
+    return (
+      '<div style="display:flex;gap:6px;margin-bottom:14px;">' +
+      state.session.map(function (s, i) {
+        var done = state.doneSteps.indexOf(i) !== -1;
+        var active = i === state.stepIdx;
+        var label = i === 0 ? "warmup" : (s.track || "drill").toLowerCase();
+        return '<button data-step="' + i + '" class="step-btn" style="flex:1;background:' + (active ? "var(--panelUp)" : "var(--panel)") + ";" +
+          "border:1px solid " + (done ? "var(--ok)" : active ? "var(--brassDim)" : "var(--line)") + ";border-radius:4px;padding:8px 6px;" +
+          "color:" + (done ? "var(--ok)" : active ? "var(--cream)" : "var(--muted)") + ";" +
+          'font-family:\'IBM Plex Mono\',monospace;font-size:10px;letter-spacing:0.1em;cursor:pointer;text-transform:uppercase;">' +
+          (done ? "&check; " : "") + esc(label) +
+          "</button>";
+      }).join("") +
+      "</div>"
+    );
+  }
+
+  function mm() { return String(Math.floor(state.remaining / 60)); }
+  function ss() { return String(state.remaining % 60).padStart(2, "0"); }
+
+  function exampleBlockHtml(step) {
+    var ttsOk = "speechSynthesis" in window;
+    var disabled = state.running;
+    return (
+      '<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);">' +
+        '<div style="display:flex;gap:10px;align-items:center;">' +
+          '<span class="eyebrow">reference</span>' +
+          (ttsOk ? '<button id="btn-hear-example" class="ghost" style="border-radius:3px;padding:4px 10px;font-size:11px;cursor:' + (disabled ? "not-allowed" : "pointer") + ';"' + (disabled ? " disabled" : "") + '>' + (state.speakingExample ? "&#9632; stop" : "&#9658; hear it") + "</button>" : "") +
+          '<button id="btn-toggle-example" class="ghost" style="border-radius:3px;padding:4px 10px;font-size:11px;cursor:pointer;">' + (state.showExample ? "hide text" : "show text") + "</button>" +
+        "</div>" +
+        (state.showExample ? '<p style="font-size:13px;line-height:1.6;color:var(--muted);margin:10px 0 0;font-style:italic;">' + esc(step.example) + "</p>" : "") +
+      "</div>"
+    );
+  }
+
+  function speakExample(text) {
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    var u = new SpeechSynthesisUtterance(text);
+    u.rate = 0.95;
+    u.onend = function () { state.speakingExample = false; render(); };
+    u.onerror = function () { state.speakingExample = false; render(); };
+    window.speechSynthesis.speak(u);
+    state.speakingExample = true;
+  }
+  function stopSpeaking() {
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    state.speakingExample = false;
+  }
+
+  function videoBlockHtml(step) {
+    return (
+      '<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);">' +
+        '<div style="display:flex;gap:10px;align-items:center;">' +
+          '<span class="eyebrow">reference</span>' +
+          '<button id="btn-toggle-video" class="ghost" style="border-radius:3px;padding:4px 10px;font-size:11px;cursor:pointer;">' + (state.showVideo ? "hide demo" : "watch demo") + "</button>" +
+        "</div>" +
+        (state.showVideo
+          ? '<div style="position:relative;width:100%;padding-top:56.25%;margin-top:10px;border-radius:4px;overflow:hidden;background:var(--ink);">' +
+              '<iframe src="https://www.youtube-nocookie.com/embed/' + esc(step.video) + '" title="demo" frameborder="0" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture" allowfullscreen ' +
+              'style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe>' +
+            "</div>"
+          : "") +
+      "</div>"
+    );
+  }
+
+  function activeStepHtml() {
+    var step = currentStep();
+    var rep = isRepStep();
+    return (
+      '<div class="card" style="margin-bottom:14px;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;">' +
+          '<div class="eyebrow">' + esc(rep ? step.track + " · scored rep" : (step.track || "warmup")) + "</div>" +
+          (!state.running ? '<button id="btn-reroll" class="ghost" style="border-radius:3px;padding:4px 10px;font-size:11px;cursor:pointer;">&#8635; different one</button>' : "") +
+        "</div>" +
+        '<h2 style="font-family:\'Big Shoulders Display\',sans-serif;font-weight:700;font-size:26px;margin:6px 0 10px;letter-spacing:0.03em;">' + esc(step.name) + "</h2>" +
+        '<p style="font-size:14px;line-height:1.55;color:var(--cream);margin:0;">' + esc(rep ? step.prompt : step.how) + "</p>" +
+        (rep ? exampleBlockHtml(step) : (step.video ? videoBlockHtml(step) : "")) +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:18px;">' +
+          '<div id="timer-display" style="font-family:\'IBM Plex Mono\',monospace;font-size:44px;color:' + (state.remaining === 0 ? "var(--rec)" : "var(--cream)") + ';">' + mm() + ":" + ss() + "</div>" +
+          vuMeterHtml(state.running) +
+        "</div>" +
+        '<div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">' +
+          (!state.running
+            ? '<button id="btn-start" class="btn">' + (state.remaining === step.time ? "Start" : state.remaining === 0 ? "Restart" : "Resume") + "</button>"
+            : '<button id="btn-done-early" class="btn" style="background:var(--rec);color:var(--cream);">Done early</button>') +
+          (!state.running && state.remaining !== step.time ? '<button id="btn-mark-complete" class="ghost" style="border-radius:3px;padding:12px 22px;font-size:16px;cursor:pointer;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;">Mark complete</button>' : "") +
+          (!state.running ? '<button id="btn-reset" class="ghost" style="border-color:var(--line);color:var(--muted);border-radius:3px;padding:12px 22px;font-size:16px;cursor:pointer;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;">Reset</button>' : "") +
+        "</div>" +
+      "</div>"
+    );
+  }
+
+  function repCaptureHtml() {
+    if (!isRepStep()) return "";
+    var m = currentMetrics();
+    var micBtn = state.speechOk
+      ? '<button id="btn-mic" class="ghost" style="border-radius:3px;padding:6px 12px;font-size:12px;cursor:pointer;color:' + (state.listening ? "var(--rec)" : "var(--brass)") + ";border-color:" + (state.listening ? "var(--rec)" : "var(--brassDim)") + ';">' + (state.listening ? "&#9632; Stop mic" : "&#9679; Mic on") + "</button>"
+      : '<span style="font-size:11px;color:var(--muted);">Mic unavailable here — dictate or paste below</span>';
+
+    var scoreBlock = "";
+    if (state.score) {
+      var sc = state.score;
+      scoreBlock =
+        '<div style="margin-top:16px;border-top:1px solid var(--line);padding-top:14px;">' +
+          '<div style="display:flex;gap:8px;">' +
+            scoreDialHtml("overall", sc.overall) + scoreDialHtml("structure", sc.structure) +
+            scoreDialHtml("clarity", sc.clarity) + scoreDialHtml("message", sc.message) +
+          "</div>" +
+          (sc.best_line ? '<div style="margin-top:14px;font-size:14px;line-height:1.5;"><span class="eyebrow">best line </span><div style="margin-top:4px;color:var(--brass);font-style:italic;">"' + esc(sc.best_line) + '"</div></div>' : "") +
+          '<div style="margin-top:12px;font-size:14px;line-height:1.5;"><span class="eyebrow">fix one thing </span><div style="margin-top:4px;">' + esc(sc.fix_one_thing) + "</div></div>" +
+          (sc.coach_note ? '<div style="margin-top:12px;font-size:13px;line-height:1.5;color:var(--muted);">' + esc(sc.coach_note) + "</div>" : "") +
+        "</div>";
+    }
+
+    return (
+      '<div class="card" style="margin-bottom:14px;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;">' +
+          '<div class="eyebrow">transcript</div>' + micBtn +
+        "</div>" +
+        '<textarea id="transcript-area" placeholder="Speak with the mic on, or paste a transcript from Voice Memos." rows="5" style="width:100%;box-sizing:border-box;margin-top:10px;line-height:1.5;resize:vertical;">' + esc(state.transcript) + "</textarea>" +
+        '<div id="metrics-line" style="display:' + (state.transcript ? "flex" : "none") + ';gap:16px;margin-top:10px;font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:var(--muted);">' +
+          '<span>' + m.words + ' words</span><span>' + m.wpm + ' wpm</span><span style="color:' + (m.fillerCount > 2 ? "var(--rec)" : "var(--ok)") + '">' + m.fillerCount + " fillers</span>" +
+        "</div>" +
+        '<div style="margin-top:14px;"><button id="btn-score" class="btn"' + (state.scoring || !state.transcript.trim() ? " disabled" : "") + ">" + (state.scoring ? "Scoring…" : "Score this rep") + "</button></div>" +
+        (state.scoreErr ? '<div style="margin-top:10px;font-size:13px;color:var(--rec);">' + esc(state.scoreErr) + "</div>" : "") +
+        scoreBlock +
+      "</div>"
+    );
+  }
+
+  function trendSvgHtml(scored) {
+    var recent = scored.slice(-14);
+    var points = recent.map(function (s, i) {
+      var x = (i / Math.max(recent.length - 1, 1)) * 290 + 5;
+      var y = 55 - (s.overall / 10) * 50;
+      return x + "," + y;
+    }).join(" ");
+    return (
+      '<div class="card" style="margin-bottom:14px;">' +
+        '<div class="eyebrow">rep score trend</div>' +
+        '<svg viewBox="0 0 300 60" style="width:100%;height:60px;margin-top:8px;" aria-label="Score trend">' +
+          '<polyline fill="none" stroke="var(--brass)" stroke-width="2" points="' + points + '"></polyline>' +
+        "</svg>" +
+      "</div>"
+    );
+  }
+
+  function sparklineCardHtml(label, values, colorVar) {
+    var recent = values.slice(-14);
+    var min = Math.min.apply(null, recent);
+    var max = Math.max.apply(null, recent);
+    var range = max - min || 1;
+    var points = recent.map(function (v, i) {
+      var x = (i / Math.max(recent.length - 1, 1)) * 290 + 5;
+      var y = 55 - ((v - min) / range) * 50;
+      return x + "," + y;
+    }).join(" ");
+    return (
+      '<div class="card" style="margin-bottom:14px;">' +
+        '<div class="eyebrow">' + esc(label) + " · " + esc(min) + "–" + esc(max) + "</div>" +
+        '<svg viewBox="0 0 300 60" style="width:100%;height:60px;margin-top:8px;" aria-label="' + esc(label) + ' trend">' +
+          '<polyline fill="none" stroke="' + colorVar + '" stroke-width="2" points="' + points + '"></polyline>' +
+        "</svg>" +
+      "</div>"
+    );
+  }
+
+  function heatmapHtml(log) {
+    var byDate = {};
+    log.forEach(function (s) { byDate[s.date] = s; });
+    var days = [];
+    var cursor = new Date();
+    for (var i = 27; i >= 0; i--) {
+      var d = new Date(cursor);
+      d.setDate(cursor.getDate() - i);
+      var key = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+      days.push({ key: key, entry: byDate[key] });
+    }
+    var cells = days.map(function (d) {
+      var color = "var(--line)";
+      var title = d.key + ": no session";
+      if (d.entry) {
+        var o = d.entry.overall;
+        color = o == null ? "var(--brassDim)" : o >= 7 ? "var(--ok)" : o >= 4 ? "var(--brass)" : "var(--rec)";
+        title = d.key + ": " + d.entry.rep + (o != null ? " · score " + o : "");
+      }
+      return '<div title="' + esc(title) + '" style="width:100%;aspect-ratio:1;border-radius:2px;background:' + color + ';"></div>';
+    }).join("");
+    return (
+      '<div class="card" style="margin-bottom:14px;">' +
+        '<div class="eyebrow">last 28 days</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:10px;">' + cells + "</div>" +
+      "</div>"
+    );
+  }
+
+  function backupBarHtml() {
+    return (
+      '<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">' +
+        '<button id="btn-export" class="ghost" style="border-radius:3px;padding:6px 14px;font-size:12px;cursor:pointer;">&#8595; export backup</button>' +
+        '<button id="btn-import" class="ghost" style="border-radius:3px;padding:6px 14px;font-size:12px;cursor:pointer;">&#8593; import backup</button>' +
+        '<input id="import-file-input" type="file" accept="application/json" style="display:none;">' +
+        (state.backupMsg ? '<span style="font-size:12px;color:var(--muted);">' + esc(state.backupMsg) + "</span>" : "") +
+      "</div>"
+    );
+  }
+
+  function logViewHtml() {
+    var scored = state.log.filter(function (s) { return s.overall != null; });
+    var byDateAsc = state.log.slice().sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+    var day1 = byDateAsc[0];
+    var out = backupBarHtml();
+    if (state.log.length) out += heatmapHtml(state.log);
+    if (scored.length > 1) out += trendSvgHtml(scored);
+    if (byDateAsc.length > 1) {
+      out += sparklineCardHtml("pace (wpm)", byDateAsc.map(function (s) { return s.wpm || 0; }), "var(--ok)");
+      out += sparklineCardHtml("fillers", byDateAsc.map(function (s) { return s.fillers || 0; }), "var(--rec)");
+    }
+    if (!state.log.length) {
+      out += '<div class="card" style="color:var(--muted);font-size:14px;">No sessions yet. Run today\'s session and log it — the streak starts at one.</div>';
+    } else {
+      state.log.slice().reverse().forEach(function (s) {
+        var canCompare = s.audioKey && day1 && day1.audioKey && s.date !== day1.date;
+        out += (
+          '<div class="card" style="margin-bottom:10px;display:flex;justify-content:space-between;gap:12px;">' +
+            "<div>" +
+              '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:13px;">' + esc(s.date) + "</div>" +
+              '<div style="font-size:12px;color:var(--muted);margin-top:4px;">' + esc(s.rep) + " · " + esc(s.wpm || "—") + " wpm · " + esc(s.fillers != null ? s.fillers : "—") + " fillers</div>" +
+              (s.note ? '<div style="font-size:12px;color:var(--muted);margin-top:4px;">' + esc(s.note) + "</div>" : "") +
+              '<div style="display:flex;gap:8px;margin-top:6px;">' +
+                (s.audioKey ? '<button class="ghost play-clip-btn" data-audio-key="' + esc(s.audioKey) + '" style="border-radius:3px;padding:4px 10px;font-size:11px;cursor:pointer;">&#9654; play</button>' : "") +
+                (canCompare ? '<button class="ghost compare-btn" data-current="' + esc(s.audioKey) + '" data-day1="' + esc(day1.audioKey) + '" style="border-radius:3px;padding:4px 10px;font-size:11px;cursor:pointer;">vs day 1</button>' : "") +
+              "</div>" +
+            "</div>" +
+            '<div style="text-align:right;">' +
+              '<button class="ghost delete-session-btn" data-date="' + esc(s.date) + '" style="border-color:var(--line);color:var(--muted);border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer;margin-bottom:8px;">delete</button>' +
+              '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:22px;color:' + (s.overall >= 7 ? "var(--ok)" : "var(--brass)") + ';">' + esc(s.overall != null ? s.overall : "—") + "</div>" +
+              '<div style="font-size:10px;color:var(--muted);letter-spacing:0.12em;">SCORE</div>' +
+            "</div>" +
+          "</div>"
+        );
+      });
+    }
+    return out;
+  }
+
+  function todayViewHtml() {
+    var out = "";
+    if (doneToday() && state.saved) {
+      out += '<div class="card" style="border-color:var(--ok);margin-bottom:14px;"><div class="eyebrow" style="color:var(--ok);">logged</div><div style="margin-top:6px;font-size:14px;">Today\'s session is in the book. Day ' + computeStreak(state.log) + " of the streak.</div></div>";
+    }
+    out += trackPickerHtml();
+    out += stepStripHtml();
+    out += activeStepHtml();
+    out += repCaptureHtml();
+    if (state.doneSteps.length >= 2 && !state.saved) {
+      out += '<button id="btn-save-session" class="btn" style="width:100%;">Log today\'s session</button>';
+    }
+    return out;
+  }
+
+  function selectPianoLesson(i) {
+    state.pianoLessonIdx = i;
+    state.pianoStepIdx = 0;
+    state.pianoMsg = null;
+    state.pianoTargetNote = null;
+    state.pianoMatchCorrect = 0;
+    state.pianoMatchTotal = 0;
+    render();
+  }
+  function restartPianoLesson() {
+    state.pianoStepIdx = 0;
+    state.pianoMsg = null;
+    render();
+  }
+  function pianoPlayPrompt() {
+    var lesson = PIANO_LESSONS[state.pianoLessonIdx];
+    if (state.pianoTargetNote) {
+      playNote(state.pianoTargetNote.n, state.pianoTargetNote.o, 0.6);
+      return;
+    }
+    var pick = lesson.pool[Math.floor(Math.random() * lesson.pool.length)];
+    state.pianoTargetNote = pick;
+    state.pianoMsg = null;
+    playNote(pick.n, pick.o, 0.6);
+    render();
+  }
+  function onPianoKeyTap(note) {
+    playNote(note.n, note.o, 0.5);
+    var lesson = PIANO_LESSONS[state.pianoLessonIdx];
+    if (lesson.mode === "sequence") {
+      var expected = lesson.sequence[state.pianoStepIdx];
+      if (expected && note.n === expected.n && note.o === expected.o) {
+        state.pianoStepIdx++;
+        state.pianoMsg = state.pianoStepIdx >= lesson.sequence.length ? "Lesson complete!" : null;
+        render();
+      }
+    } else if (lesson.mode === "match") {
+      if (state.pianoTargetNote) {
+        var target = state.pianoTargetNote;
+        var correct = note.n === target.n && note.o === target.o;
+        state.pianoMatchTotal++;
+        if (correct) { state.pianoMatchCorrect++; state.pianoMsg = "✓ correct"; }
+        else { state.pianoMsg = "not quite — that was " + target.n + target.o; }
+        state.pianoTargetNote = null;
+        render();
+      }
+    }
+  }
+  function isPianoTargetKey(note, lesson) {
+    if (lesson.mode !== "sequence") return false;
+    var expected = lesson.sequence[state.pianoStepIdx];
+    return !!expected && note.n === expected.n && note.o === expected.o;
+  }
+
+  function keyboardHtml(lesson) {
+    var whiteWidth = 34, blackWidth = 22, blackHeight = 74, whiteHeight = 120;
+    var notes = buildKeyboardRange();
+    var whiteIdx = 0;
+    var whiteKeysHtml = "", blackKeysHtml = "";
+    notes.forEach(function (note) {
+      var isBlack = note.n.indexOf("#") !== -1;
+      var keyId = note.n + note.o;
+      var isTarget = isPianoTargetKey(note, lesson);
+      if (!isBlack) {
+        var left = whiteIdx * whiteWidth;
+        whiteKeysHtml += '<div class="piano-key white' + (isTarget ? " target" : "") + '" data-note="' + keyId + '" style="left:' + left + 'px;width:' + (whiteWidth - 2) + 'px;height:' + whiteHeight + 'px;">' +
+          (note.n === "C" ? '<span class="piano-label">C' + note.o + "</span>" : "") + "</div>";
+        whiteIdx++;
+      } else {
+        var bLeft = whiteIdx * whiteWidth - blackWidth / 2;
+        blackKeysHtml += '<div class="piano-key black' + (isTarget ? " target" : "") + '" data-note="' + keyId + '" style="left:' + bLeft + 'px;width:' + blackWidth + 'px;height:' + blackHeight + 'px;"></div>';
+      }
+    });
+    var totalWidth = whiteIdx * whiteWidth;
+    return (
+      '<div style="overflow-x:auto;padding-bottom:8px;">' +
+        '<div style="position:relative;width:' + totalWidth + 'px;height:' + whiteHeight + 'px;">' +
+          whiteKeysHtml + blackKeysHtml +
+        "</div>" +
+      "</div>"
+    );
+  }
+
+  function sequenceLessonControlsHtml(lesson) {
+    var done = state.pianoStepIdx >= lesson.sequence.length;
+    return (
+      '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:13px;color:var(--muted);">' +
+        (done ? "Done — " + lesson.sequence.length + "/" + lesson.sequence.length : "Next: tap the glowing key (" + (state.pianoStepIdx + 1) + "/" + lesson.sequence.length + ")") +
+      "</div>" +
+      '<button id="btn-piano-restart" class="ghost" style="margin-top:10px;border-radius:3px;padding:6px 14px;font-size:12px;cursor:pointer;">restart</button>'
+    );
+  }
+  function matchLessonControlsHtml() {
+    return (
+      '<div style="display:flex;gap:10px;align-items:center;">' +
+        '<button id="btn-piano-prompt" class="btn" style="padding:8px 18px;font-size:14px;">' + (state.pianoTargetNote ? "&#9658; replay" : "&#9658; play note") + "</button>" +
+        '<span style="font-family:\'IBM Plex Mono\',monospace;font-size:13px;color:var(--muted);">' + state.pianoMatchCorrect + "/" + state.pianoMatchTotal + " correct</span>" +
+      "</div>"
+    );
+  }
+
+  function pianoViewHtml() {
+    var lesson = PIANO_LESSONS[state.pianoLessonIdx];
+    var out = (
+      '<div style="display:flex;gap:6px;margin-bottom:14px;">' +
+      PIANO_LESSONS.map(function (l, i) {
+        var active = i === state.pianoLessonIdx;
+        return '<button data-piano-lesson="' + i + '" class="ghost piano-lesson-btn" style="flex:1;border-radius:4px;padding:8px 4px;font-size:11px;cursor:pointer;text-transform:uppercase;letter-spacing:0.06em;' +
+          "background:" + (active ? "var(--panelUp)" : "var(--panel)") + ";color:" + (active ? "var(--cream)" : "var(--muted)") + ";border-color:" + (active ? "var(--brassDim)" : "var(--line)") + ';">' +
+          esc(l.name) + "</button>";
+      }).join("") +
+      "</div>"
+    );
+    out += (
+      '<div class="card" style="margin-bottom:14px;">' +
+        '<div class="eyebrow">piano · basic ear training</div>' +
+        '<h2 style="font-family:\'Big Shoulders Display\',sans-serif;font-weight:700;font-size:22px;margin:6px 0 10px;">' + esc(lesson.name) + "</h2>" +
+        '<p style="font-size:14px;line-height:1.5;color:var(--cream);margin:0 0 14px;">' + esc(lesson.instructions) + "</p>" +
+        (lesson.mode === "sequence" ? sequenceLessonControlsHtml(lesson) : matchLessonControlsHtml()) +
+        (state.pianoMsg ? '<p style="margin-top:12px;font-size:13px;color:var(--brass);">' + esc(state.pianoMsg) + "</p>" : "") +
+      "</div>"
+    );
+    out += '<div class="card">' + keyboardHtml(lesson) + "</div>";
+    return out;
+  }
+
+  function render() {
+    var app = document.getElementById("app");
+    app.innerHTML =
+      '<div class="wrap">' +
+        headerHtml() +
+        countersHtml() +
+        settingsHtml() +
+        tabsHtml() +
+        (state.view === "today" ? todayViewHtml() : state.view === "piano" ? pianoViewHtml() : logViewHtml()) +
+      "</div>";
+    attachHandlers();
+  }
+
+  /* ---------- targeted updates (avoid full re-render while typing / ticking) ---------- */
+  function updateTimerUI() {
+    var el = document.getElementById("timer-display");
+    if (el) {
+      el.textContent = mm() + ":" + ss();
+      el.style.color = state.remaining === 0 ? "var(--rec)" : "var(--cream)";
+    }
+  }
+  function updateTranscriptUI() {
+    var area = document.getElementById("transcript-area");
+    if (area && area.value !== state.transcript) area.value = state.transcript;
+    var line = document.getElementById("metrics-line");
+    if (line) {
+      var m = currentMetrics();
+      line.style.display = state.transcript ? "flex" : "none";
+      line.innerHTML = '<span>' + m.words + ' words</span><span>' + m.wpm + ' wpm</span><span style="color:' + (m.fillerCount > 2 ? "var(--rec)" : "var(--ok)") + '">' + m.fillerCount + " fillers</span>";
+    }
+    var scoreBtn = document.getElementById("btn-score");
+    if (scoreBtn) scoreBtn.disabled = state.scoring || !state.transcript.trim();
+  }
+
+  function attachHandlers() {
+    var el;
+    if ((el = document.getElementById("btn-settings"))) el.onclick = function () {
+      state.settingsOpen = !state.settingsOpen;
+      render();
+      if (state.settingsOpen) refreshStorageEstimate();
+    };
+    if ((el = document.getElementById("btn-save-key"))) el.onclick = function () { saveKey(document.getElementById("api-key-input").value.trim()); };
+    if ((el = document.getElementById("btn-clear-key"))) el.onclick = clearKey;
+    if ((el = document.getElementById("btn-close-settings"))) el.onclick = function () { state.settingsOpen = false; render(); };
+
+    document.querySelectorAll(".view-tab").forEach(function (b) {
+      b.onclick = function () { switchView(b.getAttribute("data-view")); };
+    });
+    document.querySelectorAll(".step-btn").forEach(function (b) {
+      b.onclick = function () { selectStep(parseInt(b.getAttribute("data-step"), 10)); };
+    });
+    document.querySelectorAll(".track-chip").forEach(function (b) {
+      b.onclick = function () { setFocusTrack(b.getAttribute("data-track") || null); };
+    });
+
+    if ((el = document.getElementById("btn-start"))) el.onclick = startStep;
+    if ((el = document.getElementById("btn-done-early"))) el.onclick = finishStep;
+    if ((el = document.getElementById("btn-mark-complete"))) el.onclick = finishStep;
+    if ((el = document.getElementById("btn-reset"))) el.onclick = resetStep;
+    if ((el = document.getElementById("btn-reroll"))) el.onclick = rerollStep;
+    if ((el = document.getElementById("btn-hear-example"))) el.onclick = function () {
+      if (state.speakingExample) { stopSpeaking(); render(); }
+      else { speakExample(currentStep().example); render(); }
+    };
+    if ((el = document.getElementById("btn-toggle-example"))) el.onclick = function () { state.showExample = !state.showExample; render(); };
+    if ((el = document.getElementById("btn-toggle-video"))) el.onclick = function () { state.showVideo = !state.showVideo; render(); };
+    if ((el = document.getElementById("btn-mic"))) el.onclick = function () { state.listening ? stopListening() : startListening(); };
+    if ((el = document.getElementById("btn-score"))) el.onclick = runScore;
+    if ((el = document.getElementById("btn-save-session"))) el.onclick = saveSession;
+    document.querySelectorAll(".play-clip-btn").forEach(function (b) {
+      b.onclick = function () { playClip(b.getAttribute("data-audio-key"), b); };
+    });
+    document.querySelectorAll(".compare-btn").forEach(function (b) {
+      b.onclick = function () { compareWithDay1(b.getAttribute("data-current"), b.getAttribute("data-day1"), b); };
+    });
+    document.querySelectorAll(".delete-session-btn").forEach(function (b) {
+      b.onclick = function () { deleteSession(b.getAttribute("data-date")); };
+    });
+    document.querySelectorAll(".piano-lesson-btn").forEach(function (b) {
+      b.onclick = function () { selectPianoLesson(parseInt(b.getAttribute("data-piano-lesson"), 10)); };
+    });
+    document.querySelectorAll(".piano-key").forEach(function (k) {
+      k.onclick = function () {
+        var m = k.getAttribute("data-note").match(/^([A-G]#?)(\d)$/);
+        onPianoKeyTap({ n: m[1], o: parseInt(m[2], 10) });
+      };
+    });
+    if ((el = document.getElementById("btn-piano-restart"))) el.onclick = restartPianoLesson;
+    if ((el = document.getElementById("btn-piano-prompt"))) el.onclick = pianoPlayPrompt;
+    if ((el = document.getElementById("btn-export"))) el.onclick = exportBackup;
+    if ((el = document.getElementById("btn-import"))) {
+      el.onclick = function () { document.getElementById("import-file-input").click(); };
+    }
+    var importInput = document.getElementById("import-file-input");
+    if (importInput) {
+      importInput.onchange = function () { importBackup(importInput.files[0]); };
+    }
+
+    if ((el = document.getElementById("transcript-area"))) {
+      el.oninput = function () {
+        state.transcript = el.value;
+        updateTranscriptUI();
+      };
+    }
+  }
+
+  render();
+
+  if ("serviceWorker" in navigator && location.protocol !== "file:") {
+    navigator.serviceWorker.register("sw.js").catch(function () {});
+  }
+})();
+</script>
+</body>
+</html>
