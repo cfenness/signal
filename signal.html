@@ -547,34 +547,51 @@
     if (track === "STORY") return "did the story actually land as a story — a clean hook in the first sentence, one clear turn, and a landing line that pays it off. Judge structure on hook/turn/landing specifically, not general coherence.";
     return "did they land a controlled point clearly and directly.";
   }
+  function typedError(kind, message) {
+    var e = new Error(message || kind);
+    e.kind = kind;
+    return e;
+  }
   async function scoreWithClaude(prompt, transcript, metrics, track) {
     var apiKey = getApiKey();
-    if (!apiKey) throw new Error("no-key");
+    if (!apiKey) throw typedError("no-key");
     var sys = "You are a broadcast voice and media coach scoring a spoken rep from its transcript. Respond ONLY with raw JSON, no markdown fences, no preamble. Schema: {\"overall\": 1-10, \"structure\": 1-10, \"clarity\": 1-10, \"message\": 1-10, \"best_line\": string, \"fix_one_thing\": string, \"coach_note\": string}. \"message\" = " + messageRubricForTrack(track) + " best_line = their strongest quotable sentence, verbatim from transcript. fix_one_thing = the single highest-leverage correction, one sentence. coach_note = two sentences max, direct, specific, no praise padding.";
     var user = "THE ASSIGNMENT: " + prompt + "\n\nDELIVERY METRICS: " + metrics.wpm + " wpm, " + metrics.fillerCount + " filler words in " + metrics.words + " words.\n\nTRANSCRIPT:\n" + transcript;
-    var res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true"
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 1000,
-        system: sys,
-        messages: [{ role: "user", content: user }]
-      })
-    });
+    var res;
+    try {
+      res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true"
+        },
+        body: JSON.stringify({
+          model: MODEL,
+          max_tokens: 1000,
+          system: sys,
+          messages: [{ role: "user", content: user }]
+        })
+      });
+    } catch (networkErr) {
+      throw typedError("network", networkErr.message);
+    }
     if (!res.ok) {
       var errText = await res.text();
-      throw new Error("api-error: " + errText.slice(0, 200));
+      if (res.status === 401) throw typedError("auth", errText.slice(0, 200));
+      if (res.status === 429) throw typedError("rate-limit", errText.slice(0, 200));
+      if (res.status >= 500) throw typedError("server", errText.slice(0, 200));
+      throw typedError("http-" + res.status, errText.slice(0, 200));
     }
     var data = await res.json();
     var text = (data.content || []).filter(function (b) { return b.type === "text"; }).map(function (b) { return b.text; }).join("\n");
     var cleanText = text.replace(/```json|```/g, "").trim();
-    return JSON.parse(cleanText);
+    try {
+      return JSON.parse(cleanText);
+    } catch (parseErr) {
+      throw typedError("parse", cleanText.slice(0, 150));
+    }
   }
 
   /* ============================================================
@@ -816,7 +833,14 @@
       var s = await scoreWithClaude(currentStep().prompt, state.transcript, currentMetrics(), currentStep().track);
       state.score = s;
     } catch (e) {
-      state.scoreErr = "Scoring didn't come back clean. Try once more. (" + e.message + ")";
+      var kindMessages = {
+        "auth": "Your API key looks invalid or expired — check it in Settings (gear icon, top right).",
+        "rate-limit": "Rate limited by Anthropic — wait a moment and try again.",
+        "server": "Anthropic's API is having trouble right now — try again shortly.",
+        "network": "Couldn't reach the API — check your connection and try again.",
+        "parse": "Got a response back but couldn't read it. Try once more."
+      };
+      state.scoreErr = kindMessages[e.kind] || ("Scoring didn't come back clean. Try once more. (" + e.message + ")");
     }
     state.scoring = false;
     render();
@@ -921,7 +945,7 @@
             '<span style="width:10px;height:10px;border-radius:50%;background:' + (live ? "var(--rec)" : "var(--line)") + ';box-shadow:' + (live ? "0 0 10px var(--rec)" : "none") + ';" aria-hidden="true"></span>' +
             '<span class="eyebrow" style="color:' + (live ? "var(--rec)" : "var(--muted)") + '">' + (state.listening ? "ON AIR" : state.running ? "LIVE" : "STANDBY") + "</span>" +
           "</div>" +
-          '<button id="btn-settings" class="ghost" style="border-radius:3px;padding:6px 10px;font-size:12px;cursor:pointer;" title="Anthropic API key">&#9881;</button>' +
+          '<button id="btn-settings" class="ghost" style="border-radius:3px;padding:6px 10px;font-size:12px;cursor:pointer;" aria-label="Settings" title="Settings — API key and storage">&#9881;</button>' +
         "</div>" +
       "</header>"
     );
