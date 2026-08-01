@@ -238,6 +238,32 @@
     };
   }
 
+  /* ---------- media training: trap recognition + on/off-record judgment ---------- */
+  var TRAP_TYPES = ["Hypothetical", "Speak-for-others", "False premise", "Silence bait", "Off-record judgment", "Not a trap"];
+  var MEDIA_SCENARIOS = [
+    { id: "t1", prompt: "A reporter asks: “What if a major distributor went bankrupt tomorrow — would that validate your whole thesis?”",
+      correctType: "Hypothetical",
+      rightMove: "Don't play out the hypothetical — anything you say gets quoted as if you predicted it. Bridge to what your data actually shows today, not a speculative future." },
+    { id: "t2", prompt: "A reporter asks: “Is [a named competitor] worried about losing share to you?”",
+      correctType: "Speak-for-others",
+      rightMove: "You can't speak for someone else's state of mind, and a guess gets reported as if you know something you don't. Redirect to your own position and data." },
+    { id: "t3", prompt: "A reporter asks: “Isn't the three-tier system basically obsolete?”",
+      correctType: "False premise",
+      rightMove: "Correct the premise before answering — if you answer as asked, you've implicitly accepted a claim you may not agree with. Then bridge to your actual point." },
+    { id: "t4", prompt: "You finish a complete, on-message answer. The reporter says nothing and just keeps looking at you, pen ready.",
+      correctType: "Silence bait",
+      rightMove: "Stop talking. The silence is a lure to keep going and say something looser or less careful than your prepared answer. A finished answer is finished." },
+    { id: "t5", prompt: "A reporter asks: “Can you walk me through how your data pipeline actually works?”",
+      correctType: "Not a trap",
+      rightMove: "This is a genuine informational question. Just answer it clearly — treating every question as an ambush makes you sound evasive when the ask was fair." },
+    { id: "t6", prompt: "You're mid-conversation with a reporter you just met at a conference. You say, “off the record, we think X is struggling.” Is that protected?",
+      correctType: "Off-record judgment",
+      rightMove: "No — off-the-record has to be explicitly agreed BEFORE you say it, and it only really holds with someone you have an established trust relationship with. With a stranger, assume everything is on the record." },
+    { id: "t7", prompt: "A reporter asks: “Is the whole beverage industry worried about GLP-1 drugs killing demand?”",
+      correctType: "Speak-for-others",
+      rightMove: "You can't speak for an entire industry's state of mind. Answer only for what your own data shows, and say so explicitly." }
+  ];
+
   var TRACKS = ["VOICE", "PRESENCE", "REPS", "MEDIA", "STORY"];
 
   function getFocusTrack() {
@@ -534,7 +560,11 @@
     pianoMatchCorrect: 0,
     pianoMatchTotal: 0,
     perceptionLessonIdx: 0,
-    perception: null
+    perception: null,
+    trapIdx: 0,
+    trapSelected: null,
+    trapAnswered: false,
+    trapCorrectCount: 0
   };
   state.perception = freshPerceptionState();
   state.session = buildSession(state.focusTrack);
@@ -900,11 +930,11 @@
     );
   }
 
-  var VIEW_LABELS = { today: "Today's session", log: "Session log", piano: "Piano", perception: "Perception" };
+  var VIEW_LABELS = { today: "Today's session", log: "Session log", piano: "Piano", perception: "Perception", traps: "Media Traps" };
   function tabsHtml() {
     return (
       '<div style="display:flex;gap:6px;margin-bottom:18px;">' +
-      ["today", "log", "piano", "perception"].map(function (v) {
+      ["today", "log", "piano", "perception", "traps"].map(function (v) {
         var active = state.view === v;
         return '<button data-view="' + v + '" class="ghost view-tab" style="border-radius:3px;padding:8px 18px;font-size:13px;cursor:pointer;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;' +
           "background:" + (active ? "var(--panelUp)" : "transparent") + ";" +
@@ -1676,6 +1706,73 @@
     return out;
   }
 
+  /* ---------- media traps quiz ---------- */
+  function selectTrapAnswer(key) {
+    if (state.trapAnswered) return;
+    state.trapSelected = key;
+    state.trapAnswered = true;
+    if (key === MEDIA_SCENARIOS[state.trapIdx].correctType) state.trapCorrectCount++;
+    render();
+  }
+  function nextTrapScenario() {
+    state.trapIdx++;
+    state.trapSelected = null;
+    state.trapAnswered = false;
+    render();
+  }
+  function restartTrapQuiz() {
+    state.trapIdx = 0;
+    state.trapSelected = null;
+    state.trapAnswered = false;
+    state.trapCorrectCount = 0;
+    render();
+  }
+  function trapsViewHtml() {
+    if (state.trapIdx >= MEDIA_SCENARIOS.length) {
+      return (
+        '<div class="card">' +
+          '<div class="eyebrow">media training · trap recognition</div>' +
+          '<h2 style="font-family:\'Big Shoulders Display\',sans-serif;font-weight:700;font-size:22px;margin:6px 0 14px;">Round complete</h2>' +
+          '<p style="font-size:15px;">You got <b style="color:var(--brass);">' + state.trapCorrectCount + " / " + MEDIA_SCENARIOS.length + "</b> right.</p>" +
+          '<button id="btn-trap-restart" class="btn" style="margin-top:12px;">Try again</button>' +
+        "</div>"
+      );
+    }
+    var scenario = MEDIA_SCENARIOS[state.trapIdx];
+    var out = (
+      '<div class="card" style="margin-bottom:14px;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">' +
+          '<div class="eyebrow">media training · trap recognition</div>' +
+          '<span style="font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:var(--muted);">' + (state.trapIdx + 1) + " / " + MEDIA_SCENARIOS.length + "</span>" +
+        "</div>" +
+        '<p style="font-size:15px;line-height:1.55;color:var(--cream);margin:0;">' + scenario.prompt + "</p>" +
+      "</div>"
+    );
+    out += '<div class="card" style="margin-bottom:14px;">' +
+      '<div class="eyebrow" style="margin-bottom:8px;">what is this?</div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+      TRAP_TYPES.map(function (t) {
+        var isSelected = state.trapSelected === t;
+        var isCorrectType = t === scenario.correctType;
+        var bg = "var(--panel)", border = "var(--line)", color = "var(--muted)";
+        if (state.trapAnswered && isCorrectType) { bg = "var(--panelUp)"; border = "var(--ok)"; color = "var(--ok)"; }
+        else if (state.trapAnswered && isSelected) { bg = "var(--panelUp)"; border = "var(--rec)"; color = "var(--rec)"; }
+        return '<button data-trap-answer="' + esc(t) + '" class="ghost trap-answer-btn" style="border-radius:20px;padding:6px 14px;font-size:12px;cursor:' + (state.trapAnswered ? "default" : "pointer") + ";" +
+          "background:" + bg + ";border-color:" + border + ";color:" + color + ';"' + (state.trapAnswered ? " disabled" : "") + ">" + esc(t) + "</button>";
+      }).join("") +
+      "</div>" +
+    "</div>";
+    if (state.trapAnswered) {
+      var correct = state.trapSelected === scenario.correctType;
+      out += '<div class="card">' +
+        '<p style="font-size:13px;color:' + (correct ? "var(--ok)" : "var(--rec)") + ';margin:0 0 8px;">' + (correct ? "Correct." : "Not quite — this was " + esc(scenario.correctType) + ".") + "</p>" +
+        '<p style="font-size:14px;line-height:1.5;color:var(--cream);margin:0;">' + esc(scenario.rightMove) + "</p>" +
+        '<button id="btn-trap-next" class="btn" style="margin-top:14px;">' + (state.trapIdx + 1 >= MEDIA_SCENARIOS.length ? "See results" : "Next") + "</button>" +
+      "</div>";
+    }
+    return out;
+  }
+
   function render() {
     var app = document.getElementById("app");
     app.innerHTML =
@@ -1684,7 +1781,7 @@
         countersHtml() +
         settingsHtml() +
         tabsHtml() +
-        (state.view === "today" ? todayViewHtml() : state.view === "piano" ? pianoViewHtml() : state.view === "perception" ? perceptionViewHtml() : logViewHtml()) +
+        (state.view === "today" ? todayViewHtml() : state.view === "piano" ? pianoViewHtml() : state.view === "perception" ? perceptionViewHtml() : state.view === "traps" ? trapsViewHtml() : logViewHtml()) +
       "</div>";
     attachHandlers();
   }
@@ -1782,6 +1879,12 @@
     if ((el = document.getElementById("btn-cvd-restart"))) el.onclick = function () { state.perception.cvd = freshPerceptionState().cvd; render(); };
     if ((el = document.getElementById("btn-blindness-start"))) el.onclick = startBlindnessDemo;
     if ((el = document.getElementById("btn-blindness-restart"))) el.onclick = function () { state.perception.blindness = freshPerceptionState().blindness; render(); };
+
+    document.querySelectorAll(".trap-answer-btn").forEach(function (b) {
+      b.onclick = function () { selectTrapAnswer(b.getAttribute("data-trap-answer")); };
+    });
+    if ((el = document.getElementById("btn-trap-next"))) el.onclick = nextTrapScenario;
+    if ((el = document.getElementById("btn-trap-restart"))) el.onclick = restartTrapQuiz;
     document.querySelectorAll(".blindness-guess-btn").forEach(function (b) {
       b.onclick = function () { answerBlindness(parseInt(b.getAttribute("data-blindness-guess"), 10)); };
     });
