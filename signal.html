@@ -185,7 +185,27 @@
     { id: "rp1", track: "REPAIR", name: "The real apology", time: 60, prompt: "Apologize for something you actually got wrong, without over-justifying.",
       example: "I got that wrong, and I'm not going to explain why I was tired or busy, because you don't owe me credit for a good reason, you're owed an actual apology. I'm sorry. I'll do it differently next time." },
     { id: "rp2", track: "REPAIR", name: "Asking for what you need", time: 60, prompt: "Ask for what you need in a relationship without making it an accusation.",
-      example: "I need more of this from you, and I want to say that without it sounding like a complaint about what you're not doing, because it isn't. It's just a thing I need that I haven't been asking for clearly, and I want to start." }
+      example: "I need more of this from you, and I want to say that without it sounding like a complaint about what you're not doing, because it isn't. It's just a thing I need that I haven't been asking for clearly, and I want to start." },
+
+    { id: "p1", track: "PITCH", name: "The 60-second pitch", time: 60, prompt: "Give a 60-second cold pitch for something you actually believe in — a product, an idea, a cause.",
+      example: "Most beverage companies are still making six-figure distribution decisions off a gut feeling and a regional sales rep's opinion. We built the thing that replaces the gut feeling with an actual number: real observed pricing and shelf presence, not a survey. It's not flashy. It's just true, and once you've seen the real number you can't go back to guessing." },
+    { id: "p2", track: "PITCH", name: "Handling 'we could build this ourselves'", time: 60, prompt: "Handle the objection: 'This sounds expensive for something we could probably build ourselves.'",
+      example: "You could — a lot of teams start there. The part that's hard to build isn't the dashboard, it's the years of raw data underneath it, and by the time you've built enough of that to trust the numbers, you've spent more than this would've cost and lost the time. I'd rather you spend that time on what you're actually good at." },
+
+    { id: "cc1", track: "CRISIS COMMS", name: "Explaining an internal mistake", time: 90, prompt: "Explain a mistake or outage to your own team or customers — not the press — in a way that builds trust instead of burning it.",
+      example: "Here's what happened, in plain terms: a bad deploy Tuesday night dropped about six hours of data before we caught it. Here's what we've already done: backfilled from the raw source, verified the numbers match. And here's the actual fix, not just for this incident: we added a check that would have caught this before it shipped. I'd rather over-explain this once than have you find out less than the full picture later." },
+    { id: "cc2", track: "CRISIS COMMS", name: "Telling a customer directly", time: 45, prompt: "You have to tell a customer their data was affected by an internal error. Deliver it directly, no hedging.",
+      example: "I need to tell you something directly: your numbers from last week were affected by an error on our end, not yours. It's fixed, and the corrected data is in your account now. I'm not going to soften that more than that — it happened, it's fixed, and here's exactly what changed so you can see for yourself." },
+
+    { id: "su1", track: "SUPPORT", name: "Being present, not performative", time: 60, prompt: "A friend tells you something genuinely hard is happening in their life. Respond in a way that's actually present, not performative.",
+      example: "I'm not going to pretend I know what to say that fixes this, because I don't think anything does right now. I just want you to know I heard you, and I'm not going anywhere. Tell me what you actually need this week — even if it's just someone to sit with you and not talk about it." },
+    { id: "su2", track: "SUPPORT", name: "Helping without taking over", time: 60, prompt: "Someone you care about is spiraling about a decision. Help without taking over.",
+      example: "I've got thoughts, but this is your call, not mine, so I'm only going to say them if you want them. What I do know is you've made harder calls than this before and been fine. What's actually making this one feel different?" },
+
+    { id: "ah1", track: "ASKING FOR HELP", name: "Asking for help with one specific thing", time: 45, prompt: "Ask for help with something you'd normally push through alone.",
+      example: "I'm not going to pretend I've got this handled, because I don't, and pretending is costing me more than just asking would. I need help with this specific piece, not everything, just this part. Can you take it, or point me to someone who can?" },
+    { id: "ah2", track: "ASKING FOR HELP", name: "Saying you're struggling", time: 45, prompt: "Tell someone close to you that you're struggling, before it gets worse.",
+      example: "I haven't been okay for a few weeks, and I've been acting like it's fine because saying it out loud felt like admitting something. It's not fine. I don't need you to fix it, I just didn't want to keep pretending with you specifically." }
   ];
 
   /* ---------- piano: basic ear-training accelerant for the vocal work, not a pillar ---------- */
@@ -294,7 +314,7 @@
       rightMove: "You can't speak for an entire industry's state of mind. Answer only for what your own data shows, and say so explicitly." }
   ];
 
-  var TRACKS = ["VOICE", "PRESENCE", "REPS", "MEDIA", "STORY", "NEGOTIATION", "LEADERSHIP", "INTERVIEW", "BOUNDARIES", "CONNECTION", "REPAIR"];
+  var TRACKS = ["VOICE", "PRESENCE", "REPS", "MEDIA", "STORY", "NEGOTIATION", "LEADERSHIP", "INTERVIEW", "BOUNDARIES", "CONNECTION", "REPAIR", "PITCH", "CRISIS COMMS", "SUPPORT", "ASKING FOR HELP"];
 
   function getFocusTrack() {
     try {
@@ -987,7 +1007,7 @@
         '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
         chips.map(function (t) {
           var active = state.focusTrack === t;
-          var label = t === null ? "Mixed" : t.charAt(0) + t.slice(1).toLowerCase();
+          var label = t === null ? "Mixed" : t.split(" ").map(function (w) { return w.charAt(0) + w.slice(1).toLowerCase(); }).join(" ");
           return '<button data-track="' + (t || "") + '" class="ghost track-chip" style="border-radius:20px;padding:6px 14px;font-size:12px;cursor:' + (state.running ? "not-allowed" : "pointer") + ";" +
             "background:" + (active ? "var(--panelUp)" : "transparent") + ";" +
             "color:" + (active ? "var(--brass)" : "var(--muted)") + ";" +
