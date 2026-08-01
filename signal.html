@@ -91,6 +91,7 @@
   .piano-key.white:active { background: var(--brass); }
   .piano-key.black:active { background: var(--brassDim); }
   .piano-label { position: absolute; bottom: 6px; left: 0; right: 0; text-align: center; font-size: 10px; color: var(--ink); font-family: 'IBM Plex Mono', monospace; }
+  .pop-cell { width: 100%; aspect-ratio: 1; border-radius: 4px; cursor: pointer; }
 
   textarea, input[type=password], input[type=text] {
     font-family: 'Inter', sans-serif;
@@ -206,6 +207,35 @@
     for (var o = 3; o <= 4; o++) NOTE_NAMES.forEach(function (n) { notes.push({ n: n, o: o }); });
     notes.push({ n: "C", o: 5 });
     return notes;
+  }
+
+  /* ---------- perceptual science, applied to BI dashboards ---------- */
+  var PERCEPTION_LESSONS = [
+    { id: "pop", demo: "pop", name: "Preattentive pop-out",
+      concept: "Color and a handful of other visual properties (orientation, motion, size) are detected “preattentively” — in parallel, before conscious, serial search kicks in. That's why a single odd-colored shape in a field of distractors is found almost instantly, regardless of how many distractors surround it.",
+      biNote: "This is why a single red bar in a field of gray bars, or one KPI tile colored differently from its neighbors, gets noticed instantly with zero scanning. It's the mechanism behind effective anomaly highlighting — and why highlighting more than one or two things at once destroys the effect." },
+    { id: "accuracy", demo: "accuracy", name: "Bar vs. pie accuracy",
+      concept: "Cleveland & McGill's classic ranking of graphical perception found people judge quantity most accurately from position and length, and least accurately from angle and area. A bar's height is a length judgment; a pie slice's size is an angle-and-area judgment — a harder one.",
+      biNote: "This is the real reason “no pie charts” is common BI advice: it's not aesthetic snobbery, it's that bars let a viewer read values more accurately than the equivalent pie. Reserve pie charts for coarse “roughly half” framing, not precise comparison." },
+    { id: "axis", demo: "axis", name: "The truncated axis trick",
+      concept: "Perceived magnitude is relative to the visual range you're shown, not just the raw numbers. Starting a bar chart's axis above zero doesn't just zoom in — it inflates small real differences into what looks like a dramatic gap.",
+      biNote: "A truncated y-axis is one of the most common ways a dashboard — intentionally or not — makes a 4% move look like a crisis or a win. Default to a zero baseline unless you have a specific, disclosed reason not to." },
+    { id: "cvd", demo: "cvd", name: "Color-vision deficiency",
+      concept: "Roughly 1 in 12 men (and about 1 in 200 women) have some form of red-green color vision deficiency — deuteranopia and protanopia are the most common. Red/green status coding that looks obvious to you may be genuinely ambiguous to a meaningful share of your audience.",
+      biNote: "Never encode meaning in red vs. green color alone. Add a redundant cue — an icon, a label, position, or a colorblind-safe palette like blue/orange — so the signal survives even when the color doesn't." },
+    { id: "blindness", demo: "blindness", name: "Change blindness",
+      concept: "When a brief visual disruption interrupts continuous viewing, people reliably fail to notice even large changes in a scene — the classic “flicker paradigm” finding from change-blindness research. Attention, not the raw visual signal, is what makes a change noticeable.",
+      biNote: "A dashboard that silently re-renders on refresh — no transition, no highlight — can have a KPI swing hard and nobody notices. Animate the change or explicitly flag what moved; don't rely on someone staring at the right cell at the right moment." }
+  ];
+
+  function freshPerceptionState() {
+    return {
+      pop: { phase: "idle", round: 0, gridSize: 16, targetIndex: null, startTime: null, results: [] },
+      accuracy: { phase: "bar", barA: 0, barB: 0, pieA: 0, pieB: 0, barEstimate: "", pieEstimate: "", barErrorPct: null, pieErrorPct: null },
+      axis: { valueA: 0, valueB: 0, estimate: "", phase: "truncated" },
+      cvd: { chips: [], revealed: false },
+      blindness: { phase: "idle", values: [], changedIndex: null, guessIndex: null, answered: false }
+    };
   }
 
   var TRACKS = ["VOICE", "PRESENCE", "REPS", "MEDIA", "STORY"];
@@ -502,8 +532,11 @@
     pianoMsg: null,
     pianoTargetNote: null,
     pianoMatchCorrect: 0,
-    pianoMatchTotal: 0
+    pianoMatchTotal: 0,
+    perceptionLessonIdx: 0,
+    perception: null
   };
+  state.perception = freshPerceptionState();
   state.session = buildSession(state.focusTrack);
   state.remaining = state.session[0].time;
 
@@ -867,11 +900,11 @@
     );
   }
 
-  var VIEW_LABELS = { today: "Today's session", log: "Session log", piano: "Piano" };
+  var VIEW_LABELS = { today: "Today's session", log: "Session log", piano: "Piano", perception: "Perception" };
   function tabsHtml() {
     return (
       '<div style="display:flex;gap:6px;margin-bottom:18px;">' +
-      ["today", "log", "piano"].map(function (v) {
+      ["today", "log", "piano", "perception"].map(function (v) {
         var active = state.view === v;
         return '<button data-view="' + v + '" class="ghost view-tab" style="border-radius:3px;padding:8px 18px;font-size:13px;cursor:pointer;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;' +
           "background:" + (active ? "var(--panelUp)" : "transparent") + ";" +
@@ -1306,6 +1339,343 @@
     return out;
   }
 
+  /* ---------- perception demos ---------- */
+  function selectPerceptionLesson(i) {
+    state.perceptionLessonIdx = i;
+    state.perception = freshPerceptionState();
+    render();
+  }
+
+  function hexToRgb(hex) {
+    var m = hex.replace("#", "");
+    return { r: parseInt(m.substr(0, 2), 16), g: parseInt(m.substr(2, 2), 16), b: parseInt(m.substr(4, 2), 16) };
+  }
+  function rgbToHex(r, g, b) {
+    function c(v) { return Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0"); }
+    return "#" + c(r) + c(g) + c(b);
+  }
+  function simulateDeuteranopia(hex) {
+    var rgb = hexToRgb(hex);
+    var r2 = 0.625 * rgb.r + 0.375 * rgb.g;
+    var g2 = 0.7 * rgb.r + 0.3 * rgb.g;
+    var b2 = 0.3 * rgb.g + 0.7 * rgb.b;
+    return rgbToHex(r2, g2, b2);
+  }
+
+  /* pop-out */
+  var POP_ROUNDS = [16, 36, 64];
+  function startPopRound() {
+    var pop = state.perception.pop;
+    pop.phase = "waiting";
+    render();
+    var delay = 500 + Math.random() * 1000;
+    setTimeout(function () {
+      pop.gridSize = POP_ROUNDS[pop.round];
+      pop.targetIndex = Math.floor(Math.random() * pop.gridSize);
+      pop.phase = "active";
+      pop.startTime = performance.now();
+      render();
+    }, delay);
+  }
+  function tapPopCell(i) {
+    var pop = state.perception.pop;
+    if (pop.phase !== "active" || i !== pop.targetIndex) return;
+    var elapsed = Math.round(performance.now() - pop.startTime);
+    pop.results.push({ gridSize: pop.gridSize, ms: elapsed });
+    pop.round++;
+    pop.phase = pop.round >= POP_ROUNDS.length ? "done" : "idle";
+    render();
+  }
+  function popDemoHtml() {
+    var pop = state.perception.pop;
+    var out = "";
+    pop.results.forEach(function (r) {
+      out += '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:var(--muted);margin-bottom:4px;">grid of ' + r.gridSize + ": " + r.ms + " ms</div>";
+    });
+    if (pop.phase === "idle" || pop.phase === "waiting") {
+      out += '<button id="btn-pop-start" class="btn"' + (pop.phase === "waiting" ? " disabled" : "") + ">" + (pop.phase === "waiting" ? "Get ready…" : (pop.round === 0 ? "Start" : "Next round") + " (" + (pop.round + 1) + "/" + POP_ROUNDS.length + ")") + "</button>";
+    } else if (pop.phase === "active") {
+      var cols = Math.round(Math.sqrt(pop.gridSize));
+      var cells = "";
+      for (var i = 0; i < pop.gridSize; i++) {
+        var isTarget = i === pop.targetIndex;
+        cells += '<div class="pop-cell" data-pop-i="' + i + '" style="background:' + (isTarget ? "var(--brass)" : "var(--line)") + ';"></div>';
+      }
+      out += '<div style="display:grid;grid-template-columns:repeat(' + cols + ',1fr);gap:6px;">' + cells + "</div>";
+    } else if (pop.phase === "done") {
+      var avg = Math.round(pop.results.reduce(function (a, r) { return a + r.ms; }, 0) / pop.results.length);
+      out += '<p style="font-size:13px;color:var(--brass);margin-top:4px;">Average: ' + avg + " ms across grid sizes 16→64. Notice it barely scales with distractor count — that flatness is the signature of preattentive processing.</p>";
+      out += '<button id="btn-pop-restart" class="ghost" style="border-radius:3px;padding:6px 14px;font-size:12px;cursor:pointer;margin-top:8px;">try again</button>';
+    }
+    return out;
+  }
+
+  /* bar vs pie accuracy */
+  function ensureAccuracyPair(acc, phase) {
+    var aKey = phase + "A", bKey = phase + "B";
+    if (!acc[aKey]) {
+      acc[aKey] = 20 + Math.floor(Math.random() * 60);
+      acc[bKey] = 20 + Math.floor(Math.random() * 60);
+    }
+  }
+  function submitAccuracyEstimate() {
+    var acc = state.perception.accuracy;
+    var input = document.getElementById("accuracy-estimate-input");
+    var val = parseFloat(input.value);
+    if (isNaN(val)) return;
+    if (acc.phase === "bar") {
+      acc.barEstimate = val;
+      acc.barErrorPct = Math.abs(val - Math.round((100 * acc.barA) / acc.barB));
+      acc.phase = "pie";
+    } else if (acc.phase === "pie") {
+      acc.pieEstimate = val;
+      acc.pieErrorPct = Math.abs(val - Math.round((100 * acc.pieA) / acc.pieB));
+      acc.phase = "done";
+    }
+    render();
+  }
+  function accuracyDemoHtml() {
+    var acc = state.perception.accuracy;
+    if (acc.phase === "bar" || acc.phase === "pie") {
+      ensureAccuracyPair(acc, acc.phase);
+      var a = acc[acc.phase + "A"], b = acc[acc.phase + "B"];
+      var chartHtml;
+      if (acc.phase === "bar") {
+        var maxH = 140, scale = maxH / Math.max(a, b);
+        chartHtml = '<div style="display:flex;gap:24px;align-items:flex-end;height:' + maxH + 'px;justify-content:center;">' +
+          '<div style="width:48px;background:var(--brass);height:' + (a * scale) + 'px;"></div>' +
+          '<div style="width:48px;background:var(--ok);height:' + (b * scale) + 'px;"></div>' +
+        "</div>" +
+        '<div style="display:flex;gap:24px;justify-content:center;margin-top:6px;"><span style="width:48px;text-align:center;font-size:11px;color:var(--muted);">A</span><span style="width:48px;text-align:center;font-size:11px;color:var(--muted);">B</span></div>';
+      } else {
+        var total = a + b;
+        var angle = (a / total) * 360;
+        chartHtml = '<svg viewBox="0 0 120 120" style="width:160px;height:160px;display:block;margin:0 auto;">' +
+          '<circle cx="60" cy="60" r="55" fill="var(--ok)"></circle>' +
+          '<path d="M60,60 L60,5 A55,55 0 ' + (angle > 180 ? 1 : 0) + ',1 ' + (60 + 55 * Math.sin(angle * Math.PI / 180)) + "," + (60 - 55 * Math.cos(angle * Math.PI / 180)) + ' Z" fill="var(--brass)"></path>' +
+        "</svg>" +
+        '<div style="text-align:center;font-size:11px;color:var(--muted);margin-top:4px;">brass slice = A, green slice = B</div>';
+      }
+      return (
+        '<div class="eyebrow" style="margin-bottom:8px;">' + (acc.phase === "bar" ? "round 1 · bar chart" : "round 2 · pie chart") + "</div>" +
+        chartHtml +
+        '<div style="margin-top:16px;display:flex;gap:8px;align-items:center;justify-content:center;">' +
+          '<span style="font-size:13px;color:var(--muted);">A is about</span>' +
+          '<input id="accuracy-estimate-input" type="number" style="width:70px;text-align:center;" placeholder="%">' +
+          '<span style="font-size:13px;color:var(--muted);">% of B</span>' +
+          '<button id="btn-accuracy-submit" class="btn" style="padding:8px 16px;font-size:13px;">Submit</button>' +
+        "</div>"
+      );
+    }
+    return (
+      '<div class="eyebrow" style="margin-bottom:8px;">results</div>' +
+      '<p style="font-size:14px;">Bar estimate was off by <b style="color:var(--brass);">' + acc.barErrorPct + " points</b>. Pie estimate was off by <b style=\"color:var(--brass);\">" + acc.pieErrorPct + " points</b>.</p>" +
+      '<button id="btn-accuracy-restart" class="ghost" style="border-radius:3px;padding:6px 14px;font-size:12px;cursor:pointer;">try again</button>'
+    );
+  }
+
+  /* truncated axis */
+  function ensureAxisValues(axis) {
+    if (!axis.valueA) {
+      var base = 40 + Math.floor(Math.random() * 20);
+      var diffPct = 3 + Math.random() * 8;
+      axis.valueA = base;
+      axis.valueB = Math.round(base * (1 + diffPct / 100));
+    }
+  }
+  function submitAxisEstimate() {
+    var axis = state.perception.axis;
+    var input = document.getElementById("axis-estimate-input");
+    var val = parseFloat(input.value);
+    if (isNaN(val)) return;
+    axis.estimate = val;
+    axis.phase = "revealed";
+    render();
+  }
+  function axisBarsHtml(axis, truncated) {
+    var lo = truncated ? Math.min(axis.valueA, axis.valueB) - 3 : 0;
+    var hi = Math.max(axis.valueA, axis.valueB) + 3;
+    var range = hi - lo;
+    var maxH = 140;
+    function h(v) { return Math.max(2, ((v - lo) / range) * maxH); }
+    return (
+      '<div style="display:flex;gap:24px;align-items:flex-end;height:' + maxH + 'px;justify-content:center;">' +
+        '<div style="width:48px;background:var(--brass);height:' + h(axis.valueA) + 'px;"></div>' +
+        '<div style="width:48px;background:var(--ok);height:' + h(axis.valueB) + 'px;"></div>' +
+      "</div>" +
+      '<div style="text-align:center;font-size:11px;color:var(--muted);margin-top:6px;">axis starts at ' + Math.round(lo) + (truncated ? " (not 0)" : " (zero baseline)") + "</div>"
+    );
+  }
+  function axisDemoHtml() {
+    var axis = state.perception.axis;
+    ensureAxisValues(axis);
+    if (axis.phase === "truncated") {
+      return (
+        '<div class="eyebrow" style="margin-bottom:8px;">this quarter vs. last</div>' +
+        axisBarsHtml(axis, true) +
+        '<div style="margin-top:16px;display:flex;gap:8px;align-items:center;justify-content:center;">' +
+          '<span style="font-size:13px;color:var(--muted);">B looks bigger by about</span>' +
+          '<input id="axis-estimate-input" type="number" style="width:70px;text-align:center;" placeholder="%">' +
+          '<span style="font-size:13px;color:var(--muted);">%</span>' +
+          '<button id="btn-axis-submit" class="btn" style="padding:8px 16px;font-size:13px;">Submit</button>' +
+        "</div>"
+      );
+    }
+    var trueDiff = Math.round((100 * (axis.valueB - axis.valueA)) / axis.valueA);
+    return (
+      '<div class="eyebrow" style="margin-bottom:8px;">same data, zero baseline</div>' +
+      axisBarsHtml(axis, false) +
+      '<p style="font-size:14px;margin-top:14px;">You estimated <b style="color:var(--brass);">' + axis.estimate + "%</b>. The real difference is <b style=\"color:var(--brass);\">" + trueDiff + "%</b>.</p>" +
+      '<button id="btn-axis-restart" class="ghost" style="border-radius:3px;padding:6px 14px;font-size:12px;cursor:pointer;">try again</button>'
+    );
+  }
+
+  /* color-vision deficiency */
+  function ensureCvdChips(cvd) {
+    if (!cvd.chips.length) {
+      var statuses = ["good", "good", "good", "good", "bad", "bad"];
+      for (var i = statuses.length - 1; i > 0; i--) {
+        var j = Math.floor(Math.random() * (i + 1));
+        var tmp = statuses[i]; statuses[i] = statuses[j]; statuses[j] = tmp;
+      }
+      cvd.chips = statuses;
+    }
+  }
+  function revealCvd() {
+    state.perception.cvd.revealed = true;
+    render();
+  }
+  function chipsRowHtml(chips, simulate) {
+    return '<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">' +
+      chips.map(function (status) {
+        var base = status === "good" ? "#7FA86B" : "#E0523C";
+        var color = simulate ? simulateDeuteranopia(base) : base;
+        return '<div style="width:36px;height:36px;border-radius:6px;background:' + color + ';"></div>';
+      }).join("") +
+    "</div>";
+  }
+  function cvdDemoHtml() {
+    var cvd = state.perception.cvd;
+    ensureCvdChips(cvd);
+    var out = '<div class="eyebrow" style="margin-bottom:8px;">how many are flagged “bad”?</div>' + chipsRowHtml(cvd.chips, false);
+    if (!cvd.revealed) {
+      out += '<div style="margin-top:16px;text-align:center;"><button id="btn-cvd-reveal" class="btn" style="padding:8px 18px;font-size:13px;">Reveal + simulate deuteranopia</button></div>';
+    } else {
+      var badCount = cvd.chips.filter(function (s) { return s === "bad"; }).length;
+      out += '<p style="font-size:13px;margin-top:14px;color:var(--muted);">Actual count: <b style="color:var(--brass);">' + badCount + " bad</b> (of " + cvd.chips.length + ").</p>" +
+        '<div class="eyebrow" style="margin:14px 0 8px;">approximate deuteranopia simulation</div>' +
+        chipsRowHtml(cvd.chips, true) +
+        '<p style="font-size:12px;color:var(--muted);margin-top:10px;">Approximation only — severity varies by individual. Notice how much closer the two colors sit once simulated.</p>' +
+        '<button id="btn-cvd-restart" class="ghost" style="border-radius:3px;padding:6px 14px;font-size:12px;cursor:pointer;margin-top:8px;">new set</button>';
+    }
+    return out;
+  }
+
+  /* change blindness */
+  var BLINDNESS_LABELS = ["Revenue", "Orders", "Avg Price", "Returns"];
+  function startBlindnessDemo() {
+    var bl = state.perception.blindness;
+    var values = BLINDNESS_LABELS.map(function () { return 40 + Math.floor(Math.random() * 60); });
+    var changedIndex = Math.floor(Math.random() * BLINDNESS_LABELS.length);
+    bl.values = values;
+    bl.changedIndex = changedIndex;
+    bl.answered = false;
+    bl.guessIndex = null;
+    bl.phase = "showingA";
+    render();
+    setTimeout(function () {
+      bl.phase = "blank";
+      render();
+      setTimeout(function () {
+        bl.phase = "showingB";
+        render();
+      }, 200);
+    }, 1800);
+  }
+  function answerBlindness(guessIndex) {
+    var bl = state.perception.blindness;
+    if (bl.phase !== "showingB") return;
+    bl.guessIndex = guessIndex;
+    bl.answered = true;
+    bl.phase = "answered";
+    render();
+  }
+  function blindnessTilesHtml(values, highlightIndex) {
+    return '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">' +
+      BLINDNESS_LABELS.map(function (label, i) {
+        return '<div class="card" style="padding:10px;text-align:center;' + (highlightIndex === i ? "border-color:var(--brass);" : "") + '">' +
+          '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;">' + esc(label) + "</div>" +
+          '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:20px;margin-top:4px;">' + values[i] + "</div>" +
+        "</div>";
+      }).join("") +
+    "</div>";
+  }
+  function blindnessDemoHtml() {
+    var bl = state.perception.blindness;
+    if (bl.phase === "idle") {
+      return '<button id="btn-blindness-start" class="btn">Start</button>';
+    }
+    if (bl.phase === "showingA") {
+      return '<p style="font-size:13px;color:var(--muted);margin-bottom:10px;">Look at these — something will change in a moment.</p>' + blindnessTilesHtml(bl.values, null);
+    }
+    if (bl.phase === "blank") {
+      return '<div style="height:140px;background:var(--ink);border-radius:6px;"></div>';
+    }
+    if (bl.phase === "showingB") {
+      var displayValues = bl.values.slice();
+      displayValues[bl.changedIndex] = Math.round(displayValues[bl.changedIndex] * 0.6);
+      return blindnessTilesHtml(displayValues, null) +
+        '<p style="font-size:13px;margin:14px 0 8px;">Did anything change? Tap the tile, or say nothing changed.</p>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+          BLINDNESS_LABELS.map(function (label, i) {
+            return '<button data-blindness-guess="' + i + '" class="ghost blindness-guess-btn" style="border-radius:3px;padding:6px 12px;font-size:12px;cursor:pointer;">' + esc(label) + "</button>";
+          }).join("") +
+          '<button data-blindness-guess="-1" class="ghost blindness-guess-btn" style="border-radius:3px;padding:6px 12px;font-size:12px;cursor:pointer;">nothing changed</button>' +
+        "</div>";
+    }
+    // answered
+    var finalValues = bl.values.slice();
+    var changedFrom = finalValues[bl.changedIndex];
+    finalValues[bl.changedIndex] = Math.round(finalValues[bl.changedIndex] * 0.6);
+    var correct = bl.guessIndex === bl.changedIndex;
+    return blindnessTilesHtml(finalValues, bl.changedIndex) +
+      '<p style="font-size:13px;margin-top:14px;">' + (correct ? "You caught it. " : "Missed it — ") + esc(BLINDNESS_LABELS[bl.changedIndex]) + " went from " + changedFrom + " to " + finalValues[bl.changedIndex] + " (" + Math.round(100 * (finalValues[bl.changedIndex] - changedFrom) / changedFrom) + "%).</p>" +
+      '<button id="btn-blindness-restart" class="ghost" style="border-radius:3px;padding:6px 14px;font-size:12px;cursor:pointer;">try again</button>';
+  }
+
+  function perceptionDemoHtml(lesson) {
+    if (lesson.demo === "pop") return popDemoHtml();
+    if (lesson.demo === "accuracy") return accuracyDemoHtml();
+    if (lesson.demo === "axis") return axisDemoHtml();
+    if (lesson.demo === "cvd") return cvdDemoHtml();
+    if (lesson.demo === "blindness") return blindnessDemoHtml();
+    return "";
+  }
+
+  function perceptionViewHtml() {
+    var lesson = PERCEPTION_LESSONS[state.perceptionLessonIdx];
+    var out = (
+      '<div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">' +
+      PERCEPTION_LESSONS.map(function (l, i) {
+        var active = i === state.perceptionLessonIdx;
+        return '<button data-perception-lesson="' + i + '" class="ghost perception-lesson-btn" style="flex:1 1 30%;border-radius:4px;padding:8px 4px;font-size:10px;cursor:pointer;text-transform:uppercase;letter-spacing:0.04em;' +
+          "background:" + (active ? "var(--panelUp)" : "var(--panel)") + ";color:" + (active ? "var(--cream)" : "var(--muted)") + ";border-color:" + (active ? "var(--brassDim)" : "var(--line)") + ';">' +
+          esc(l.name) + "</button>";
+      }).join("") +
+      "</div>"
+    );
+    out += (
+      '<div class="card" style="margin-bottom:14px;">' +
+        '<div class="eyebrow">perceptual science · applied to BI</div>' +
+        '<h2 style="font-family:\'Big Shoulders Display\',sans-serif;font-weight:700;font-size:22px;margin:6px 0 10px;">' + esc(lesson.name) + "</h2>" +
+        '<p style="font-size:14px;line-height:1.55;color:var(--cream);margin:0 0 10px;">' + esc(lesson.concept) + "</p>" +
+        '<p style="font-size:13px;line-height:1.5;color:var(--brass);margin:0;padding:10px;background:var(--panelUp);border-radius:4px;">' + esc(lesson.biNote) + "</p>" +
+      "</div>"
+    );
+    out += '<div class="card">' + perceptionDemoHtml(lesson) + "</div>";
+    return out;
+  }
+
   function render() {
     var app = document.getElementById("app");
     app.innerHTML =
@@ -1314,7 +1684,7 @@
         countersHtml() +
         settingsHtml() +
         tabsHtml() +
-        (state.view === "today" ? todayViewHtml() : state.view === "piano" ? pianoViewHtml() : logViewHtml()) +
+        (state.view === "today" ? todayViewHtml() : state.view === "piano" ? pianoViewHtml() : state.view === "perception" ? perceptionViewHtml() : logViewHtml()) +
       "</div>";
     attachHandlers();
   }
@@ -1395,6 +1765,26 @@
     });
     if ((el = document.getElementById("btn-piano-restart"))) el.onclick = restartPianoLesson;
     if ((el = document.getElementById("btn-piano-prompt"))) el.onclick = pianoPlayPrompt;
+
+    document.querySelectorAll(".perception-lesson-btn").forEach(function (b) {
+      b.onclick = function () { selectPerceptionLesson(parseInt(b.getAttribute("data-perception-lesson"), 10)); };
+    });
+    if ((el = document.getElementById("btn-pop-start"))) el.onclick = startPopRound;
+    if ((el = document.getElementById("btn-pop-restart"))) el.onclick = function () { state.perception.pop = freshPerceptionState().pop; render(); };
+    document.querySelectorAll(".pop-cell").forEach(function (c) {
+      c.onclick = function () { tapPopCell(parseInt(c.getAttribute("data-pop-i"), 10)); };
+    });
+    if ((el = document.getElementById("btn-accuracy-submit"))) el.onclick = submitAccuracyEstimate;
+    if ((el = document.getElementById("btn-accuracy-restart"))) el.onclick = function () { state.perception.accuracy = freshPerceptionState().accuracy; render(); };
+    if ((el = document.getElementById("btn-axis-submit"))) el.onclick = submitAxisEstimate;
+    if ((el = document.getElementById("btn-axis-restart"))) el.onclick = function () { state.perception.axis = freshPerceptionState().axis; render(); };
+    if ((el = document.getElementById("btn-cvd-reveal"))) el.onclick = revealCvd;
+    if ((el = document.getElementById("btn-cvd-restart"))) el.onclick = function () { state.perception.cvd = freshPerceptionState().cvd; render(); };
+    if ((el = document.getElementById("btn-blindness-start"))) el.onclick = startBlindnessDemo;
+    if ((el = document.getElementById("btn-blindness-restart"))) el.onclick = function () { state.perception.blindness = freshPerceptionState().blindness; render(); };
+    document.querySelectorAll(".blindness-guess-btn").forEach(function (b) {
+      b.onclick = function () { answerBlindness(parseInt(b.getAttribute("data-blindness-guess"), 10)); };
+    });
     if ((el = document.getElementById("btn-export"))) el.onclick = exportBackup;
     if ((el = document.getElementById("btn-import"))) {
       el.onclick = function () { document.getElementById("import-file-input").click(); };
