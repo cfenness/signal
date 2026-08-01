@@ -218,7 +218,9 @@
         { n: "B", o: 4 }, { n: "A", o: 4 }, { n: "G", o: 4 }, { n: "F", o: 4 }, { n: "E", o: 4 }, { n: "D", o: 4 }, { n: "C", o: 4 }
       ] },
     { id: "p3", name: "Pitch match", mode: "match", instructions: "Listen, then tap the key that matches the pitch you heard — the actual ear-training drill for your voice work.",
-      pool: [{ n: "C", o: 4 }, { n: "D", o: 4 }, { n: "E", o: 4 }, { n: "F", o: 4 }, { n: "G", o: 4 }, { n: "A", o: 4 }, { n: "B", o: 4 }, { n: "C", o: 5 }] }
+      pool: [{ n: "C", o: 4 }, { n: "D", o: 4 }, { n: "E", o: 4 }, { n: "F", o: 4 }, { n: "G", o: 4 }, { n: "A", o: 4 }, { n: "B", o: 4 }, { n: "C", o: 5 }] },
+    { id: "p4", name: "Play it for real", mode: "listen", instructions: "No tapping the screen — find each note on your OWN keyboard and actually play it. The mic listens and tells you if you got it. This is the one that teaches you where the keys really are.",
+      sequence: [{ n: "C", o: 4 }, { n: "D", o: 4 }, { n: "E", o: 4 }, { n: "F", o: 4 }, { n: "G", o: 4 }, { n: "A", o: 4 }, { n: "B", o: 4 }, { n: "C", o: 5 }] }
   ];
   var NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
   var audioCtx = null;
@@ -226,6 +228,48 @@
     var idx = NOTE_NAMES.indexOf(n);
     var midi = (o + 1) * 12 + idx;
     return 440 * Math.pow(2, (midi - 69) / 12);
+  }
+  function freqToNote(freq) {
+    if (!freq || freq <= 0 || !isFinite(freq)) return null;
+    var midi = Math.round(69 + 12 * Math.log2(freq / 440));
+    var name = NOTE_NAMES[((midi % 12) + 12) % 12];
+    var octave = Math.floor(midi / 12) - 1;
+    return { n: name, o: octave, freq: freq, midi: midi };
+  }
+  /* autocorrelation pitch detection (ACF2+, a standard technique) -- pure function of
+     a time-domain buffer + sample rate, so it's fully testable with a synthetic sine
+     wave without needing real mic input. */
+  function detectPitch(buffer, sampleRate) {
+    var SIZE = buffer.length;
+    var rms = 0;
+    for (var i = 0; i < SIZE; i++) rms += buffer[i] * buffer[i];
+    rms = Math.sqrt(rms / SIZE);
+    if (rms < 0.01) return null; // too quiet / silence
+
+    var r1 = 0, r2 = SIZE - 1, thres = 0.2;
+    for (var i = 0; i < SIZE / 2; i++) { if (Math.abs(buffer[i]) < thres) { r1 = i; break; } }
+    for (var i = 1; i < SIZE / 2; i++) { if (Math.abs(buffer[SIZE - i]) < thres) { r2 = SIZE - i; break; } }
+    var trimmed = buffer.slice(r1, r2);
+    var n = trimmed.length;
+    if (n < 8) return null;
+
+    var c = new Array(n).fill(0);
+    for (var lag = 0; lag < n; lag++) {
+      for (var j = 0; j < n - lag; j++) c[lag] += trimmed[j] * trimmed[j + lag];
+    }
+    var d = 0;
+    while (d + 1 < n && c[d] > c[d + 1]) d++;
+    var maxval = -1, maxpos = -1;
+    for (var i = d; i < n; i++) { if (c[i] > maxval) { maxval = c[i]; maxpos = i; } }
+    if (maxpos <= 0) return null;
+    var T0 = maxpos;
+    if (T0 > 0 && T0 < n - 1) {
+      var x1 = c[T0 - 1], x2 = c[T0], x3 = c[T0 + 1];
+      var a = (x1 + x3 - 2 * x2) / 2;
+      var b = (x3 - x1) / 2;
+      if (a) T0 = T0 - b / (2 * a);
+    }
+    return sampleRate / T0;
   }
   function ensureAudioCtx() {
     if (!audioCtx) {
@@ -253,9 +297,16 @@
     osc.stop(now + dur + 0.05);
   }
   function buildKeyboardRange() {
+    // mirrors a real 61-key keyboard: 5 octaves, F to F (the standard range for
+    // 61-key boards -- e.g. the Zoemer DEK-610S this was built to match)
     var notes = [];
-    for (var o = 3; o <= 4; o++) NOTE_NAMES.forEach(function (n) { notes.push({ n: n, o: o }); });
-    notes.push({ n: "C", o: 5 });
+    var idx = NOTE_NAMES.indexOf("F");
+    var octave = 2;
+    for (var i = 0; i < 61; i++) {
+      notes.push({ n: NOTE_NAMES[idx], o: octave });
+      idx++;
+      if (idx >= NOTE_NAMES.length) { idx = 0; octave++; }
+    }
     return notes;
   }
 
@@ -628,6 +679,9 @@
     pianoTargetNote: null,
     pianoMatchCorrect: 0,
     pianoMatchTotal: 0,
+    pianoListening: false,
+    pianoListenHeard: null,
+    pianoListenErr: null,
     perceptionLessonIdx: 0,
     perception: null,
     trapIdx: 0,
@@ -645,6 +699,10 @@
   var mediaStream = null;
   var mediaRecorder = null;
   var audioChunks = [];
+  var pitchStream = null;
+  var pitchAnalyser = null;
+  var pitchLoopHandle = null;
+  var pitchCooldownUntil = 0;
 
   function tierArrayFor(i) {
     if (i === 0) return WARMUPS;
@@ -869,12 +927,17 @@
     render();
   }
 
+  function scrollPianoToDefault() {
+    var kb = document.getElementById("piano-keyboard-scroll");
+    if (kb) kb.scrollLeft = 340; // brings middle C into view -- all current lessons operate around there
+  }
   function switchView(v) {
     if (state.running) finishStep();
     stopSpeaking();
+    if (state.pianoListening) stopPitchListening();
     state.view = v;
     render();
-    if (v === "piano") playCurrentTargetNote();
+    if (v === "piano") { playCurrentTargetNote(); scrollPianoToDefault(); }
   }
 
   function saveKey(v) {
@@ -1340,25 +1403,92 @@
 
   function playCurrentTargetNote() {
     var lesson = PIANO_LESSONS[state.pianoLessonIdx];
-    if (!lesson || lesson.mode !== "sequence") return;
+    if (!lesson || (lesson.mode !== "sequence" && lesson.mode !== "listen")) return;
     var expected = lesson.sequence[state.pianoStepIdx];
     if (expected) playNote(expected.n, expected.o, 0.5);
   }
   function selectPianoLesson(i) {
+    if (state.pianoListening) stopPitchListening();
     state.pianoLessonIdx = i;
     state.pianoStepIdx = 0;
     state.pianoMsg = null;
     state.pianoTargetNote = null;
     state.pianoMatchCorrect = 0;
     state.pianoMatchTotal = 0;
+    state.pianoListenHeard = null;
+    state.pianoListenErr = null;
     render();
     playCurrentTargetNote();
+    scrollPianoToDefault();
   }
   function restartPianoLesson() {
+    if (state.pianoListening) stopPitchListening();
     state.pianoStepIdx = 0;
     state.pianoMsg = null;
+    state.pianoListenHeard = null;
+    state.pianoListenErr = null;
     render();
     playCurrentTargetNote();
+    scrollPianoToDefault();
+  }
+
+  /* ---------- listen mode: confirm real keyboard input via mic + pitch detection ---------- */
+  async function startPitchListening() {
+    try {
+      pitchStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      state.pianoListenErr = "Couldn't access the mic — check permissions and try again.";
+      render();
+      return;
+    }
+    var ctx = ensureAudioCtx();
+    var source = ctx.createMediaStreamSource(pitchStream);
+    pitchAnalyser = ctx.createAnalyser();
+    pitchAnalyser.fftSize = 2048;
+    source.connect(pitchAnalyser);
+    state.pianoListening = true;
+    state.pianoListenErr = null;
+    state.pianoListenHeard = null;
+    pitchCooldownUntil = 0;
+    render();
+    // setInterval, not requestAnimationFrame -- rAF is tied to visual rendering and gets
+    // aggressively throttled/paused when the tab isn't the active foreground view (screen
+    // dim, glancing at another app), which would silently stall a listening session.
+    pitchLoopHandle = setInterval(pitchLoopTick, 100);
+  }
+  function stopPitchListening() {
+    if (pitchStream) pitchStream.getTracks().forEach(function (t) { t.stop(); });
+    pitchStream = null;
+    pitchAnalyser = null;
+    if (pitchLoopHandle) { clearInterval(pitchLoopHandle); pitchLoopHandle = null; }
+    state.pianoListening = false;
+    render();
+  }
+  function pitchLoopTick() {
+    if (!pitchAnalyser) return;
+    var buf = new Float32Array(pitchAnalyser.fftSize);
+    pitchAnalyser.getFloatTimeDomainData(buf);
+    var now = performance.now();
+    if (now > pitchCooldownUntil) {
+      var freq = detectPitch(buf, audioCtx.sampleRate);
+      var note = freqToNote(freq);
+      if (note) {
+        var lesson = PIANO_LESSONS[state.pianoLessonIdx];
+        var expected = lesson.sequence[state.pianoStepIdx];
+        if (expected) {
+          state.pianoListenHeard = note.n + note.o;
+          if (note.n === expected.n && note.o === expected.o) {
+            state.pianoStepIdx++;
+            state.pianoMsg = state.pianoStepIdx >= lesson.sequence.length ? "Lesson complete!" : null;
+            pitchCooldownUntil = now + 900;
+            if (state.pianoStepIdx < lesson.sequence.length) setTimeout(playCurrentTargetNote, 500);
+          } else {
+            pitchCooldownUntil = now + 350;
+          }
+          render();
+        }
+      }
+    }
   }
   function pianoPlayPrompt() {
     var lesson = PIANO_LESSONS[state.pianoLessonIdx];
@@ -1424,7 +1554,7 @@
     });
     var totalWidth = whiteIdx * whiteWidth;
     return (
-      '<div style="overflow-x:auto;padding-bottom:8px;">' +
+      '<div id="piano-keyboard-scroll" style="overflow-x:auto;padding-bottom:8px;">' +
         '<div style="position:relative;width:' + totalWidth + 'px;height:' + whiteHeight + 'px;">' +
           whiteKeysHtml + blackKeysHtml +
         "</div>" +
@@ -1449,6 +1579,28 @@
       "</div>"
     );
   }
+  function listenLessonControlsHtml(lesson) {
+    var done = state.pianoStepIdx >= lesson.sequence.length;
+    var expected = lesson.sequence[state.pianoStepIdx];
+    if (done) {
+      return (
+        '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:13px;color:var(--ok);margin-bottom:10px;">Done — ' + lesson.sequence.length + "/" + lesson.sequence.length + "</div>" +
+        '<button id="btn-piano-restart" class="ghost" style="border-radius:3px;padding:6px 14px;font-size:12px;cursor:pointer;">restart</button>'
+      );
+    }
+    return (
+      '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:var(--muted);margin-bottom:10px;">Find and play (' + (state.pianoStepIdx + 1) + "/" + lesson.sequence.length + ")</div>" +
+      '<div style="font-family:\'Big Shoulders Display\',sans-serif;font-weight:700;font-size:44px;letter-spacing:0.04em;margin-bottom:14px;">' + esc(expected.n + expected.o) + "</div>" +
+      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">' +
+        (state.pianoListening
+          ? '<button id="btn-listen-stop" class="btn" style="background:var(--rec);color:var(--cream);padding:8px 18px;font-size:14px;">&#9632; stop listening</button>'
+          : '<button id="btn-listen-start" class="btn" style="padding:8px 18px;font-size:14px;">&#9679; start listening</button>') +
+        (state.pianoListening ? '<span class="eyebrow" style="color:var(--rec);">&#9679; listening…</span>' : "") +
+      "</div>" +
+      (state.pianoListenHeard ? '<div style="margin-top:10px;font-size:13px;color:var(--muted);">last heard: <b style="color:var(--brass);">' + esc(state.pianoListenHeard) + "</b></div>" : "") +
+      (state.pianoListenErr ? '<div style="margin-top:10px;font-size:13px;color:var(--rec);">' + esc(state.pianoListenErr) + "</div>" : "")
+    );
+  }
 
   function pianoViewHtml() {
     var lesson = PIANO_LESSONS[state.pianoLessonIdx];
@@ -1467,7 +1619,7 @@
         '<div class="eyebrow">piano · basic ear training</div>' +
         '<h2 style="font-family:\'Big Shoulders Display\',sans-serif;font-weight:700;font-size:22px;margin:6px 0 10px;">' + esc(lesson.name) + "</h2>" +
         '<p style="font-size:14px;line-height:1.5;color:var(--cream);margin:0 0 14px;">' + esc(lesson.instructions) + "</p>" +
-        (lesson.mode === "sequence" ? sequenceLessonControlsHtml(lesson) : matchLessonControlsHtml()) +
+        (lesson.mode === "sequence" ? sequenceLessonControlsHtml(lesson) : lesson.mode === "listen" ? listenLessonControlsHtml(lesson) : matchLessonControlsHtml()) +
         (state.pianoMsg ? '<p style="margin-top:12px;font-size:13px;color:var(--brass);">' + esc(state.pianoMsg) + "</p>" : "") +
       "</div>"
     );
@@ -1881,6 +2033,8 @@
 
   function render() {
     var app = document.getElementById("app");
+    var prevKbScroll = document.getElementById("piano-keyboard-scroll");
+    var savedScrollLeft = prevKbScroll ? prevKbScroll.scrollLeft : null;
     app.innerHTML =
       '<div class="wrap">' +
         headerHtml() +
@@ -1890,6 +2044,12 @@
         (state.view === "today" ? todayViewHtml() : state.view === "piano" ? pianoViewHtml() : state.view === "perception" ? perceptionViewHtml() : state.view === "traps" ? trapsViewHtml() : logViewHtml()) +
       "</div>";
     attachHandlers();
+    // a full re-render recreates the keyboard's scroll container from scratch (scrollLeft resets to 0) --
+    // every key tap calls render(), so without this the keyboard would snap back to the start on every tap.
+    if (savedScrollLeft !== null) {
+      var newKbScroll = document.getElementById("piano-keyboard-scroll");
+      if (newKbScroll) newKbScroll.scrollLeft = savedScrollLeft;
+    }
   }
 
   /* ---------- targeted updates (avoid full re-render while typing / ticking) ---------- */
@@ -1968,6 +2128,8 @@
     });
     if ((el = document.getElementById("btn-piano-restart"))) el.onclick = restartPianoLesson;
     if ((el = document.getElementById("btn-piano-prompt"))) el.onclick = pianoPlayPrompt;
+    if ((el = document.getElementById("btn-listen-start"))) el.onclick = startPitchListening;
+    if ((el = document.getElementById("btn-listen-stop"))) el.onclick = stopPitchListening;
 
     document.querySelectorAll(".perception-lesson-btn").forEach(function (b) {
       b.onclick = function () { selectPerceptionLesson(parseInt(b.getAttribute("data-perception-lesson"), 10)); };
