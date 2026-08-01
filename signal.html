@@ -930,13 +930,13 @@
     );
   }
 
-  var VIEW_LABELS = { today: "Today's session", log: "Session log", piano: "Piano", perception: "Perception", traps: "Media Traps" };
+  var VIEW_LABELS = { today: "Today", log: "Log", piano: "Piano", perception: "Perception", traps: "Traps" };
   function tabsHtml() {
     return (
-      '<div style="display:flex;gap:6px;margin-bottom:18px;">' +
+      '<div style="display:flex;gap:6px;margin-bottom:18px;overflow-x:auto;-webkit-overflow-scrolling:touch;flex-wrap:nowrap;">' +
       ["today", "log", "piano", "perception", "traps"].map(function (v) {
         var active = state.view === v;
-        return '<button data-view="' + v + '" class="ghost view-tab" style="border-radius:3px;padding:8px 18px;font-size:13px;cursor:pointer;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;' +
+        return '<button data-view="' + v + '" class="ghost view-tab" style="flex-shrink:0;border-radius:3px;padding:8px 16px;font-size:13px;cursor:pointer;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;white-space:nowrap;' +
           "background:" + (active ? "var(--panelUp)" : "transparent") + ";" +
           "color:" + (active ? "var(--cream)" : "var(--muted)") + ";" +
           "border-color:" + (active ? "var(--brassDim)" : "var(--line)") + ';">' +
