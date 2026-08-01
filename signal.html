@@ -220,7 +220,19 @@
     { id: "p3", name: "Pitch match", mode: "match", instructions: "Listen, then tap the key that matches the pitch you heard — the actual ear-training drill for your voice work.",
       pool: [{ n: "C", o: 4 }, { n: "D", o: 4 }, { n: "E", o: 4 }, { n: "F", o: 4 }, { n: "G", o: 4 }, { n: "A", o: 4 }, { n: "B", o: 4 }, { n: "C", o: 5 }] },
     { id: "p4", name: "Play it for real", mode: "listen", instructions: "No tapping the screen — find each note on your OWN keyboard and actually play it. The mic listens and tells you if you got it. This is the one that teaches you where the keys really are.",
-      sequence: [{ n: "C", o: 4 }, { n: "D", o: 4 }, { n: "E", o: 4 }, { n: "F", o: 4 }, { n: "G", o: 4 }, { n: "A", o: 4 }, { n: "B", o: 4 }, { n: "C", o: 5 }] }
+      sequence: [{ n: "C", o: 4 }, { n: "D", o: 4 }, { n: "E", o: 4 }, { n: "F", o: 4 }, { n: "G", o: 4 }, { n: "A", o: 4 }, { n: "B", o: 4 }, { n: "C", o: 5 }] },
+    { id: "p5", name: "Common chords", mode: "chords", instructions: "No timer here — just step through common chords, see the shape, hear it, and try it on your own keyboard at your own pace.",
+      chords: [
+        { name: "C major", notes: [{ n: "C", o: 4 }, { n: "E", o: 4 }, { n: "G", o: 4 }] },
+        { name: "G major", notes: [{ n: "G", o: 4 }, { n: "B", o: 4 }, { n: "D", o: 5 }] },
+        { name: "D major", notes: [{ n: "D", o: 4 }, { n: "F#", o: 4 }, { n: "A", o: 4 }] },
+        { name: "A major", notes: [{ n: "A", o: 4 }, { n: "C#", o: 5 }, { n: "E", o: 5 }] },
+        { name: "E major", notes: [{ n: "E", o: 4 }, { n: "G#", o: 4 }, { n: "B", o: 4 }] },
+        { name: "F major", notes: [{ n: "F", o: 4 }, { n: "A", o: 4 }, { n: "C", o: 5 }] },
+        { name: "A minor", notes: [{ n: "A", o: 4 }, { n: "C", o: 5 }, { n: "E", o: 5 }] },
+        { name: "E minor", notes: [{ n: "E", o: 4 }, { n: "G", o: 4 }, { n: "B", o: 4 }] },
+        { name: "D minor", notes: [{ n: "D", o: 4 }, { n: "F", o: 4 }, { n: "A", o: 4 }] }
+      ] }
   ];
   var NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
   var audioCtx = null;
@@ -682,6 +694,7 @@
     pianoListening: false,
     pianoListenHeard: null,
     pianoListenErr: null,
+    pianoChordIdx: 0,
     perceptionLessonIdx: 0,
     perception: null,
     trapIdx: 0,
@@ -927,9 +940,21 @@
     render();
   }
 
-  function scrollPianoToDefault() {
+  function whiteKeyIndexOf(note) {
+    var range = buildKeyboardRange();
+    var idx = 0;
+    for (var i = 0; i < range.length; i++) {
+      if (range[i].n === note.n && range[i].o === note.o) return idx;
+      if (range[i].n.indexOf("#") === -1) idx++;
+    }
+    return idx;
+  }
+  function scrollPianoToNote(note) {
     var kb = document.getElementById("piano-keyboard-scroll");
-    if (kb) kb.scrollLeft = 340; // brings middle C into view -- all current lessons operate around there
+    if (kb) kb.scrollLeft = Math.max(0, whiteKeyIndexOf(note) * 34 - 40);
+  }
+  function scrollPianoToDefault() {
+    scrollPianoToNote({ n: "C", o: 4 }); // all sequence/listen lessons operate around middle C
   }
   function switchView(v) {
     if (state.running) finishStep();
@@ -1411,6 +1436,7 @@
     if (state.pianoListening) stopPitchListening();
     state.pianoLessonIdx = i;
     state.pianoStepIdx = 0;
+    state.pianoChordIdx = 0;
     state.pianoMsg = null;
     state.pianoTargetNote = null;
     state.pianoMatchCorrect = 0;
@@ -1418,8 +1444,14 @@
     state.pianoListenHeard = null;
     state.pianoListenErr = null;
     render();
-    playCurrentTargetNote();
-    scrollPianoToDefault();
+    var lesson = PIANO_LESSONS[i];
+    if (lesson.mode === "chords") {
+      scrollPianoToNote(lesson.chords[0].notes[0]);
+      hearChord();
+    } else {
+      playCurrentTargetNote();
+      scrollPianoToDefault();
+    }
   }
   function restartPianoLesson() {
     if (state.pianoListening) stopPitchListening();
@@ -1528,9 +1560,15 @@
     }
   }
   function isPianoTargetKey(note, lesson) {
-    if (lesson.mode !== "sequence") return false;
-    var expected = lesson.sequence[state.pianoStepIdx];
-    return !!expected && note.n === expected.n && note.o === expected.o;
+    if (lesson.mode === "sequence") {
+      var expected = lesson.sequence[state.pianoStepIdx];
+      return !!expected && note.n === expected.n && note.o === expected.o;
+    }
+    if (lesson.mode === "chords") {
+      var chord = lesson.chords[state.pianoChordIdx];
+      return chord.notes.some(function (cn) { return cn.n === note.n && cn.o === note.o; });
+    }
+    return false;
   }
 
   function keyboardHtml(lesson) {
@@ -1602,6 +1640,34 @@
     );
   }
 
+  function goToChord(lesson, i) {
+    var n = lesson.chords.length;
+    state.pianoChordIdx = ((i % n) + n) % n;
+    render();
+    scrollPianoToNote(lesson.chords[state.pianoChordIdx].notes[0]);
+    hearChord();
+  }
+  function nextChord() { goToChord(PIANO_LESSONS[state.pianoLessonIdx], state.pianoChordIdx + 1); }
+  function prevChord() { goToChord(PIANO_LESSONS[state.pianoLessonIdx], state.pianoChordIdx - 1); }
+  function hearChord() {
+    var lesson = PIANO_LESSONS[state.pianoLessonIdx];
+    var chord = lesson.chords[state.pianoChordIdx];
+    chord.notes.forEach(function (n) { playNote(n.n, n.o, 0.9); });
+  }
+  function chordControlsHtml(lesson) {
+    var chord = lesson.chords[state.pianoChordIdx];
+    return (
+      '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:var(--muted);margin-bottom:8px;">' + (state.pianoChordIdx + 1) + " / " + lesson.chords.length + "</div>" +
+      '<div style="font-family:\'Big Shoulders Display\',sans-serif;font-weight:700;font-size:36px;letter-spacing:0.03em;margin-bottom:6px;">' + esc(chord.name) + "</div>" +
+      '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:13px;color:var(--muted);margin-bottom:16px;">' + chord.notes.map(function (n) { return n.n + n.o; }).join(" · ") + "</div>" +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;">' +
+        '<button id="btn-chord-prev" class="ghost" style="border-radius:3px;padding:8px 16px;font-size:13px;cursor:pointer;">&#8592; prev</button>' +
+        '<button id="btn-chord-hear" class="btn" style="padding:8px 18px;font-size:14px;">&#9658; hear it</button>' +
+        '<button id="btn-chord-next" class="ghost" style="border-radius:3px;padding:8px 16px;font-size:13px;cursor:pointer;">next &#8594;</button>' +
+      "</div>"
+    );
+  }
+
   function pianoViewHtml() {
     var lesson = PIANO_LESSONS[state.pianoLessonIdx];
     var out = (
@@ -1619,7 +1685,7 @@
         '<div class="eyebrow">piano · basic ear training</div>' +
         '<h2 style="font-family:\'Big Shoulders Display\',sans-serif;font-weight:700;font-size:22px;margin:6px 0 10px;">' + esc(lesson.name) + "</h2>" +
         '<p style="font-size:14px;line-height:1.5;color:var(--cream);margin:0 0 14px;">' + esc(lesson.instructions) + "</p>" +
-        (lesson.mode === "sequence" ? sequenceLessonControlsHtml(lesson) : lesson.mode === "listen" ? listenLessonControlsHtml(lesson) : matchLessonControlsHtml()) +
+        (lesson.mode === "sequence" ? sequenceLessonControlsHtml(lesson) : lesson.mode === "listen" ? listenLessonControlsHtml(lesson) : lesson.mode === "chords" ? chordControlsHtml(lesson) : matchLessonControlsHtml()) +
         (state.pianoMsg ? '<p style="margin-top:12px;font-size:13px;color:var(--brass);">' + esc(state.pianoMsg) + "</p>" : "") +
       "</div>"
     );
@@ -2130,6 +2196,9 @@
     if ((el = document.getElementById("btn-piano-prompt"))) el.onclick = pianoPlayPrompt;
     if ((el = document.getElementById("btn-listen-start"))) el.onclick = startPitchListening;
     if ((el = document.getElementById("btn-listen-stop"))) el.onclick = stopPitchListening;
+    if ((el = document.getElementById("btn-chord-prev"))) el.onclick = prevChord;
+    if ((el = document.getElementById("btn-chord-next"))) el.onclick = nextChord;
+    if ((el = document.getElementById("btn-chord-hear"))) el.onclick = hearChord;
 
     document.querySelectorAll(".perception-lesson-btn").forEach(function (b) {
       b.onclick = function () { selectPerceptionLesson(parseInt(b.getAttribute("data-perception-lesson"), 10)); };
