@@ -553,7 +553,7 @@
       var blob = await idbGet(keys[i]);
       if (blob) clips[keys[i]] = await blobToDataUrl(blob);
     }
-    var payload = { exportedAt: todayKey(), log: state.log, clips: clips };
+    var payload = { exportedAt: todayKey(), log: state.log, clips: clips, pianoCompletions: loadPianoCompletions(), trapHistory: loadTrapHistory() };
     var json = JSON.stringify(payload);
     var blob2 = new Blob([json], { type: "application/json" });
     var url = URL.createObjectURL(blob2);
@@ -564,7 +564,7 @@
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-    state.backupMsg = "Exported " + state.log.length + " session(s), " + Object.keys(clips).length + " clip(s).";
+    state.backupMsg = "Exported " + state.log.length + " session(s), " + Object.keys(clips).length + " clip(s), plus piano/traps history.";
     render();
   }
 
@@ -586,7 +586,21 @@
         var blob = await dataUrlToBlob(clips[keys[i]]);
         await idbPut(keys[i], blob);
       }
-      state.backupMsg = "Imported " + payload.log.length + " session(s), " + keys.length + " clip(s).";
+      // max-merge, not sum/overwrite -- re-importing a backup you already have shouldn't double-count history
+      if (payload.pianoCompletions) {
+        var localPiano = loadPianoCompletions();
+        Object.keys(payload.pianoCompletions).forEach(function (id) {
+          localPiano[id] = Math.max(localPiano[id] || 0, payload.pianoCompletions[id]);
+        });
+        localStorage.setItem("signal-piano-completions", JSON.stringify(localPiano));
+      }
+      if (payload.trapHistory) {
+        var localTrap = loadTrapHistory();
+        localTrap.runs = Math.max(localTrap.runs || 0, payload.trapHistory.runs || 0);
+        localTrap.bestScore = Math.max(localTrap.bestScore || 0, payload.trapHistory.bestScore || 0);
+        localStorage.setItem("signal-trap-history", JSON.stringify(localTrap));
+      }
+      state.backupMsg = "Imported " + payload.log.length + " session(s), " + keys.length + " clip(s), plus piano/traps history.";
     } catch (e) {
       state.backupMsg = "Import failed — file wasn't a SIGNAL backup.";
     }
