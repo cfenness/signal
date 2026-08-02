@@ -1387,6 +1387,22 @@
     );
   }
 
+  function otherPracticeHtml() {
+    var pianoCounts = loadPianoCompletions();
+    var pianoTotal = Object.keys(pianoCounts).reduce(function (sum, id) { return sum + pianoCounts[id]; }, 0);
+    var trapHist = loadTrapHistory();
+    if (!pianoTotal && !trapHist.runs) return "";
+    var lines = [];
+    if (pianoTotal) lines.push("Piano: " + pianoTotal + " session" + (pianoTotal === 1 ? "" : "s") + " completed");
+    if (trapHist.runs) lines.push("Media traps: best " + trapHist.bestScore + " / " + MEDIA_SCENARIOS.length + " across " + trapHist.runs + " run" + (trapHist.runs === 1 ? "" : "s"));
+    return (
+      '<div class="card" style="margin-bottom:14px;">' +
+        '<div class="eyebrow" style="margin-bottom:8px;">other practice</div>' +
+        lines.map(function (l) { return '<div style="font-size:13px;color:var(--cream);margin-bottom:4px;">' + esc(l) + "</div>"; }).join("") +
+      "</div>"
+    );
+  }
+
   function coverageHtml(log) {
     var repTracks = TRACKS.filter(function (t) { return t !== "VOICE" && t !== "PRESENCE"; });
     var counts = {};
@@ -1421,6 +1437,7 @@
     var out = backupBarHtml();
     if (state.log.length) out += heatmapHtml(state.log);
     if (state.log.length) out += coverageHtml(state.log);
+    out += otherPracticeHtml();
     if (scored.length > 1) out += trendSvgHtml(scored);
     if (byDateAsc.length > 1) {
       out += sparklineCardHtml("pace (wpm)", byDateAsc.map(function (s) { return s.wpm || 0; }), "var(--ok)");
