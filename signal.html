@@ -447,6 +447,22 @@
     try { localStorage.setItem("signal-log-v1", JSON.stringify(log)); }
     catch (e) { console.error("save failed", e); }
   }
+  // scoped to piano itself, deliberately separate from the main log/streak --
+  // piano is an ear-training accelerant for the vocal work, not a pillar, so its
+  // practice history shouldn't dilute what the daily streak actually measures.
+  function loadPianoCompletions() {
+    try {
+      var raw = localStorage.getItem("signal-piano-completions");
+      return raw ? JSON.parse(raw) : {};
+    } catch (e) { return {}; }
+  }
+  function recordPianoCompletion(lessonId) {
+    try {
+      var counts = loadPianoCompletions();
+      counts[lessonId] = (counts[lessonId] || 0) + 1;
+      localStorage.setItem("signal-piano-completions", JSON.stringify(counts));
+    } catch (e) {}
+  }
   function getApiKey() {
     try { return localStorage.getItem("signal-api-key") || ""; }
     catch (e) { return ""; }
@@ -1530,7 +1546,9 @@
           state.pianoListenHeard = note.n + note.o;
           if (note.n === expected.n && note.o === expected.o) {
             state.pianoStepIdx++;
-            state.pianoMsg = state.pianoStepIdx >= lesson.sequence.length ? "Lesson complete!" : null;
+            var listenDone = state.pianoStepIdx >= lesson.sequence.length;
+            state.pianoMsg = listenDone ? "Lesson complete!" : null;
+            if (listenDone) recordPianoCompletion(lesson.id);
             pitchCooldownUntil = now + 900;
             if (state.pianoStepIdx < lesson.sequence.length) setTimeout(playCurrentTargetNote, 500);
           } else {
@@ -1560,7 +1578,9 @@
       var expected = lesson.sequence[state.pianoStepIdx];
       if (expected && note.n === expected.n && note.o === expected.o) {
         state.pianoStepIdx++;
-        state.pianoMsg = state.pianoStepIdx >= lesson.sequence.length ? "Lesson complete!" : null;
+        var seqDone = state.pianoStepIdx >= lesson.sequence.length;
+        state.pianoMsg = seqDone ? "Lesson complete!" : null;
+        if (seqDone) recordPianoCompletion(lesson.id);
         render();
         if (state.pianoStepIdx < lesson.sequence.length) {
           setTimeout(playCurrentTargetNote, 550);
@@ -1751,9 +1771,16 @@
       }).join("") +
       "</div>"
     );
+    var completions = loadPianoCompletions();
+    var completedCount = completions[lesson.id] || 0;
     out += (
       '<div class="card" style="margin-bottom:14px;">' +
-        '<div class="eyebrow">piano · basic ear training</div>' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;">' +
+          '<div class="eyebrow">piano · basic ear training</div>' +
+          ((lesson.mode === "sequence" || lesson.mode === "listen") && completedCount > 0
+            ? '<span class="eyebrow" style="color:var(--ok);">completed ' + completedCount + "x</span>"
+            : "") +
+        "</div>" +
         '<h2 style="font-family:\'Big Shoulders Display\',sans-serif;font-weight:700;font-size:22px;margin:6px 0 10px;">' + esc(lesson.name) + "</h2>" +
         '<p style="font-size:14px;line-height:1.5;color:var(--cream);margin:0 0 14px;">' + esc(lesson.instructions) + "</p>" +
         (lesson.mode === "sequence" ? sequenceLessonControlsHtml(lesson) : lesson.mode === "listen" ? listenLessonControlsHtml(lesson) : lesson.mode === "chords" ? chordControlsHtml(lesson) : lesson.mode === "progressions" ? progressionControlsHtml(lesson) : matchLessonControlsHtml()) +
